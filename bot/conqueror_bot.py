@@ -40,22 +40,19 @@ sio = socketio.Client()
 # --------------------------------------------------------------------------
 # Intégration Conqueror (pywinauto) - seulement chargée si mode réel
 # --------------------------------------------------------------------------
-def _cliquer(controle, pause_s: float = 0.4):
+def _cliquer(controle, pause_avant_s: float = 0.3, pause_apres_s: float = 0.5):
     """
-    Clic robuste : essaie invoke() (appel direct via l'API d'accessibilité
-    Windows, indépendant des coordonnées écran / de la fenêtre au premier
-    plan) puis se rabat sur click_input() (clic souris réel) si le contrôle
-    ne supporte pas l'InvokePattern (ex: labels texte cliquables).
+    Clic souris réel (click_input) avec pause avant/après, pour laisser le
+    temps à Conqueror de finir de rendre l'écran avant le clic, et de
+    traiter l'action avant l'étape suivante.
 
-    Sans confirmation manuelle entre chaque étape, click_input() seul s'est
-    montré peu fiable sur les boutons WPF custom de Conqueror (clic "perdu",
-    sans effet, sans erreur levée) -> invoke() + pause après coup.
+    Note : invoke() (API d'accessibilité, sans clic souris réel) a été
+    essayé mais semble ne rien déclencher sur les boutons WPF custom de
+    Conqueror (pas d'erreur, mais aucun effet) -> retour à click_input().
     """
-    try:
-        controle.invoke()
-    except Exception:
-        controle.click_input()
-    time.sleep(pause_s)
+    time.sleep(pause_avant_s)
+    controle.click_input()
+    time.sleep(pause_apres_s)
 
 
 # --------------------------------------------------------------------------
