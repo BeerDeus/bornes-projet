@@ -40,6 +40,25 @@ sio = socketio.Client()
 # --------------------------------------------------------------------------
 # Intégration Conqueror (pywinauto) - seulement chargée si mode réel
 # --------------------------------------------------------------------------
+def _cliquer(controle, pause_s: float = 0.4):
+    """
+    Clic robuste : essaie invoke() (appel direct via l'API d'accessibilité
+    Windows, indépendant des coordonnées écran / de la fenêtre au premier
+    plan) puis se rabat sur click_input() (clic souris réel) si le contrôle
+    ne supporte pas l'InvokePattern (ex: labels texte cliquables).
+
+    Sans confirmation manuelle entre chaque étape, click_input() seul s'est
+    montré peu fiable sur les boutons WPF custom de Conqueror (clic "perdu",
+    sans effet, sans erreur levée) -> invoke() + pause après coup.
+    """
+    try:
+        controle.invoke()
+    except Exception:
+        controle.click_input()
+    time.sleep(pause_s)
+
+
+# --------------------------------------------------------------------------
 def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     """
     Pilote réellement Conqueror via pywinauto.
@@ -95,7 +114,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             print("[bot] Annulé à l'étape 1 : aucun clic effectué.")
             return {"succes": False, "erreur": "annule_etape_sple_partie"}
 
-    bouton_sple_partie.click_input()
+    _cliquer(bouton_sple_partie)
     print("[bot] Clic 'Sple Partie' effectué.")
 
     # --- Étape 2/3 : "Nbre joueurs" (attend la transition vers LaneControl) ---
@@ -108,7 +127,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             print("[bot] Annulé à l'étape 2 : piste ouverte, joueurs non configurés.")
             return {"succes": True, "piste": data.get("piste"), "nomJoueur": nom, "etape": "arrete_avant_nb_joueurs"}
 
-    bouton_nb_joueurs.click_input()
+    _cliquer(bouton_nb_joueurs)
     print("[bot] Clic 'Nbre joueurs' effectué.")
 
     # --- Étape 3/3 : dialogue "Nombre de joueurs" (boutons 0-12 + OK) ---
@@ -133,8 +152,8 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                 "etape": "arrete_avant_validation_joueurs",
             }
 
-    bouton_valeur.click_input()
-    dialogue.child_window(auto_id="btnOK", control_type="Button").click_input()
+    _cliquer(bouton_valeur)
+    _cliquer(dialogue.child_window(auto_id="btnOK", control_type="Button"))
     print(f"[bot] {nb_joueurs} joueur(s) validé(s).")
 
     # --- Étape 4/4 : renommage des joueurs (optionnel, selon data["joueurs"]) ---
@@ -161,7 +180,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
             nom_defaut = f"joueur{index}"
             try:
-                fenetre.child_window(title=nom_defaut, control_type="Text").click_input()
+                _cliquer(fenetre.child_window(title=nom_defaut, control_type="Text"))
             except Exception as exc:
                 print(f"[bot] Impossible de cliquer sur {nom_defaut!r} : {exc}")
                 continue
@@ -184,9 +203,9 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             if info_joueur.get("bumpers"):
                 case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
                 if not case_bumpers.get_toggle_state():
-                    case_bumpers.click_input()
+                    _cliquer(case_bumpers)
 
-            dialogue_joueur.child_window(auto_id="btnOK", control_type="Button").click_input()
+            _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
             print(f"[bot] Joueur {index} renommé en {nom_joueur!r}.")
             noms_appliques.append(nom_joueur)
 
