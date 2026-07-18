@@ -26,7 +26,10 @@ import socketio
 # Configuration
 # --------------------------------------------------------------------------
 SERVEUR_URL = os.environ.get("SERVEUR_URL", "https://bowling.m2s-photo.fr")
-SIMULATION_MODE = os.environ.get("SIMULATION_MODE", "true").lower() != "false"
+# Mode réel par défaut (interagit vraiment avec Conqueror). Remettre à "true"
+# (SIMULATION_MODE=true) pour tester le canal borne<->bot sans toucher à
+# Conqueror, par exemple après une mise à jour de Conqueror ou du parcours.
+SIMULATION_MODE = os.environ.get("SIMULATION_MODE", "false").lower() != "false"
 # Confirmation manuelle avant chaque clic réel dans Conqueror. Désactivée par
 # défaut depuis validation du parcours Sple Partie -> Nbre joueurs -> OK.
 # Remettre à "true" (CONFIRMATION_MANUELLE=true) pour tout nouveau parcours
