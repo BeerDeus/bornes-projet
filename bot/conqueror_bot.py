@@ -55,21 +55,51 @@ def _cliquer(controle, pause_avant_s: float = 0.3, pause_apres_s: float = 0.5):
     time.sleep(pause_apres_s)
 
 
+def _echapper_touches(texte: str) -> str:
+    """
+    Échappe les caractères spéciaux du mini-langage SendKeys de pywinauto
+    (+^%~(){}[]) pour que send_keys() les tape littéralement plutôt que de
+    les interpréter comme des modificateurs/touches.
+    """
+    speciaux = set("+^%~(){}[]")
+    return "".join(f"{{{c}}}" if c in speciaux else c for c in texte)
+
+
+def _remplir_champ_au_clavier(champ, valeur):
+    """
+    Remplit un champ par frappe clavier réelle plutôt que par set_text()
+    (API UIA programmatique) : clic dans le champ pour le focus, Ctrl+A +
+    Suppr pour vider le contenu existant, puis frappe du texte. set_text()
+    semble ignoré par endroits sur les champs WPF custom de Conqueror ; la
+    frappe simulée passe par le même chemin qu'une saisie humaine.
+    """
+    from pywinauto.keyboard import send_keys
+
+    champ.click_input()
+    time.sleep(0.2)
+    send_keys("^a{DEL}")
+    time.sleep(0.2)
+    send_keys(_echapper_touches(str(valeur)), pause=0.03, with_spaces=True)
+    time.sleep(0.3)
+
+
 # --------------------------------------------------------------------------
 def _ajouter_joueur(fenetre, nom_joueur, pointure=None, bumpers=False):
     """
     Ajoute un joueur en tapant directement son nom sur l'écran LaneControl
     (aucun clic préalable requis : taper un caractère ouvre directement le
     dialogue "Modifier les options du joueur..." pour un nouveau joueur).
-    Le premier caractère déclenche l'ouverture, puis le nom complet écrase
-    le champ une fois le dialogue confirmé ouvert (plus fiable que de
-    compter sur le fait que toute la frappe soit routée pendant la
-    transition d'écran).
+    Le premier caractère déclenche l'ouverture (frappe clavier réelle via
+    send_keys, pas type_keys sur le contrôle), puis le champ nom est vidé
+    et retapé au clavier avec le nom complet (voir _remplir_champ_au_clavier
+    - plus fiable que set_text() sur ces contrôles).
     """
+    from pywinauto.keyboard import send_keys
+
     fenetre.set_focus()
     time.sleep(0.2)
-    fenetre.type_keys(nom_joueur[0], pause=0.05)
-    time.sleep(0.5)
+    send_keys(_echapper_touches(nom_joueur[0]), pause=0.05)
+    time.sleep(0.6)
 
     dialogue_joueur = fenetre.child_window(
         title_re="Modifier les options du joueur.*", control_type="Window"
@@ -77,11 +107,11 @@ def _ajouter_joueur(fenetre, nom_joueur, pointure=None, bumpers=False):
     dialogue_joueur.wait("visible enabled", timeout=10)
 
     champ_nom = dialogue_joueur.child_window(auto_id="Nom (ou ID membre)Entry", control_type="Edit")
-    champ_nom.set_text(nom_joueur)
+    _remplir_champ_au_clavier(champ_nom, nom_joueur)
 
     if pointure:
         champ_pointure = dialogue_joueur.child_window(auto_id="PointureEntry", control_type="Edit")
-        champ_pointure.set_text(str(pointure))
+        _remplir_champ_au_clavier(champ_pointure, pointure)
 
     if bumpers:
         case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
