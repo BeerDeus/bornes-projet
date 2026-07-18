@@ -16,6 +16,7 @@ compléter les sélecteurs pywinauto marqués TODO ci-dessous, avec Conqueror
 ouvert et visible.
 """
 
+import ctypes
 import os
 import threading
 import time
@@ -43,6 +44,32 @@ sio = socketio.Client()
 # --------------------------------------------------------------------------
 # Intégration Conqueror (pywinauto) - seulement chargée si mode réel
 # --------------------------------------------------------------------------
+def _forcer_premier_plan(fenetre) -> bool:
+    """
+    set_focus() seul peut échouer SILENCIEUSEMENT (aucune erreur, mais rien
+    ne se passe) à cause du verrou de premier plan de Windows : un processus
+    en arrière-plan (ce script, lancé depuis un terminal) n'est normalement
+    pas autorisé à voler le focus clavier à la fenêtre active. C'est
+    cohérent avec le fait que les clics souris (click_input) fonctionnent
+    -> ils ne dépendent pas du focus clavier -> alors que la frappe clavier
+    simulée (send_keys) échoue silencieusement.
+
+    Contournement classique : simuler une touche Alt juste avant
+    SetForegroundWindow, ce qui satisfait la condition de Windows et
+    débloque le changement de premier plan. On vérifie ensuite explicitement
+    que ça a marché plutôt que de le supposer.
+    """
+    user32 = ctypes.windll.user32
+    hwnd = fenetre.handle
+    user32.keybd_event(0x12, 0, 0, 0)  # Alt down
+    user32.keybd_event(0x12, 0, 0x0002, 0)  # Alt up
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.2)
+    reussi = user32.GetForegroundWindow() == hwnd
+    print(f"[bot] Conqueror au premier plan : {'OK' if reussi else 'ÉCHEC'}")
+    return reussi
+
+
 def _cliquer(controle, pause_avant_s: float = 0.3, pause_apres_s: float = 0.5):
     """
     Clic souris réel (click_input) avec pause avant/après, pour laisser le
@@ -99,8 +126,7 @@ def _ajouter_joueur(fenetre, nom_joueur, pointure=None, bumpers=False):
     """
     from pywinauto.keyboard import send_keys
 
-    fenetre.set_focus()
-    time.sleep(0.2)
+    _forcer_premier_plan(fenetre)
     send_keys(_echapper_touches(nom_joueur[0]), pause=0.05)
     time.sleep(0.6)
 
@@ -160,8 +186,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     # indirectement) -> on le fait explicitement, sinon les clics/frappes
     # partent dans le vide si une autre fenêtre (terminal, VS Code...) est
     # active.
-    fenetre.set_focus()
-    time.sleep(0.3)
+    _forcer_premier_plan(fenetre)
 
     nom = data.get("nom", "Test")
     nb_parties = str(data.get("nbParties", 1))
