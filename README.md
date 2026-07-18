@@ -65,25 +65,21 @@ avant chaque clic effectif (`CONFIRMATION_MANUELLE=true` par défaut) — rien n
 tant que tu ne tapes pas "o". Idéalement, fais ce premier essai réel **hors heures
 d'ouverture / hors événement**, pas un samedi soir.
 
-Le parcours automatisé se fait en 3 étapes, **chacune avec sa propre confirmation** :
+Le parcours automatisé se fait en 3 étapes (`CONFIRMATION_MANUELLE=true` pour une
+confirmation avant chaque étape, désactivé par défaut une fois le parcours validé) :
 
-1. `$env:SIMULATION_MODE="false"` puis `python conqueror_bot.py` — tu dois voir
-   `ATTENTION : mode réel actif...`.
-2. Déclencher le test depuis `index.html`. Le bot va, à chaque étape, remplir/cliquer
-   puis attendre ta validation en console avant de continuer :
-   - **Étape 1/3** : remplit "Référence" avec "Test" → demande confirmation avant de
-     cliquer "Sple Partie" (ouvre la piste).
-   - **Étape 2/3** : demande confirmation avant de cliquer "Nbre joueurs".
-   - **Étape 3/3** : demande confirmation avant de sélectionner le nombre de joueurs
-     (valeur envoyée par la borne, `nbJoueurs`) et de cliquer "OK".
-3. À chaque prompt, vérifie sur l'écran Conqueror que l'état correspond bien à ce qui
-   est annoncé **avant** de taper `o`. Toute autre touche annule cette étape sans rien
-   exécuter (les étapes précédentes déjà validées restent, elles, acquises).
-4. Note : la sélection de la piste (combo "Ressource") n'est pas encore automatisée —
-   la piste actuellement sélectionnée par défaut dans Conqueror est utilisée.
+1. Remplit "Référence" puis clique "Sple Partie" (ouvre la piste, écran LaneControl).
+2. Pour chaque joueur envoyé par la borne (`joueurs`) : tape directement son nom au
+   clavier (ouvre le dialogue "Modifier les options du joueur..."), renseigne la
+   pointure/les bumpers si fournis, clique "OK". Pas de dialogue "Nbre joueurs" : les
+   joueurs sont ajoutés un par un par saisie directe.
+3. Clique "Ajout parties" → dialogue "Nombre de parties" → sélectionne la valeur
+   envoyée par la borne (`nbParties`). Comme pour la sélection du nombre de joueurs
+   (abandonnée au profit de la saisie directe), cliquer sur le chiffre valide
+   directement, pas de bouton "OK" séparé.
 
-Une fois plusieurs tests réels validés sans souci, `CONFIRMATION_MANUELLE=false`
-permettra de retirer ces confirmations (à faire consciemment, pas par défaut).
+Non géré pour l'instant (prévu en Phase 4, cf. Cahier des Charges section 3) :
+sélection de la piste (la piste par défaut est utilisée), tarifs CE.
 
 ## Pour tester depuis une vraie tablette Android
 

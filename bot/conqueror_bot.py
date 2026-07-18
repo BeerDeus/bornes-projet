@@ -56,6 +56,42 @@ def _cliquer(controle, pause_avant_s: float = 0.3, pause_apres_s: float = 0.5):
 
 
 # --------------------------------------------------------------------------
+def _ajouter_joueur(fenetre, nom_joueur, pointure=None, bumpers=False):
+    """
+    Ajoute un joueur en tapant directement son nom sur l'écran LaneControl
+    (aucun clic préalable requis : taper un caractère ouvre directement le
+    dialogue "Modifier les options du joueur..." pour un nouveau joueur).
+    Le premier caractère déclenche l'ouverture, puis le nom complet écrase
+    le champ une fois le dialogue confirmé ouvert (plus fiable que de
+    compter sur le fait que toute la frappe soit routée pendant la
+    transition d'écran).
+    """
+    fenetre.set_focus()
+    time.sleep(0.2)
+    fenetre.type_keys(nom_joueur[0], pause=0.05)
+    time.sleep(0.5)
+
+    dialogue_joueur = fenetre.child_window(
+        title_re="Modifier les options du joueur.*", control_type="Window"
+    )
+    dialogue_joueur.wait("visible enabled", timeout=10)
+
+    champ_nom = dialogue_joueur.child_window(auto_id="Nom (ou ID membre)Entry", control_type="Edit")
+    champ_nom.set_text(nom_joueur)
+
+    if pointure:
+        champ_pointure = dialogue_joueur.child_window(auto_id="PointureEntry", control_type="Edit")
+        champ_pointure.set_text(str(pointure))
+
+    if bumpers:
+        case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
+        if not case_bumpers.get_toggle_state():
+            _cliquer(case_bumpers)
+
+    _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
+    print(f"[bot] Joueur ajouté : {nom_joueur!r}.")
+
+
 def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     """
     Pilote réellement Conqueror via pywinauto.
@@ -65,18 +101,21 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
       1. Écran "Liste d'attente" : saisie référence + clic "Sple Partie"
          (ouvre la piste -> écran "LaneControl").
-      2. Écran "LaneControl" : clic "Nbre joueurs" (ouvre le dialogue "dlg").
-      3. Dialogue "Nombre de joueurs" : boutons 0 à 12 (un bouton = un total
-         de joueurs, pas une saisie chiffre par chiffre), puis "OK".
-      4. Pour chaque joueur (data["joueurs"]) : clic sur son nom par défaut
-         ("joueur1", "joueur2"...) -> dialogue "Modifier les options du
-         joueur..." -> saisie nom réel (+ pointure/bumpers si fournis) -> OK.
+      2. Pour chaque joueur (data["joueurs"]) : saisie directe du nom au
+         clavier (voir _ajouter_joueur) -> dialogue "Modifier les options
+         du joueur..." -> nom (+ pointure/bumpers si fournis) -> OK.
+         Plus besoin du dialogue "Nbre joueurs" (0-12) : la saisie directe
+         crée les joueurs un par un.
+      3. Clic "Ajout parties" -> dialogue "Nombre de parties" (boutons
+         0-12, mêmes propriétés que "Nbre joueurs" : le clic sur le chiffre
+         valide directement, pas de bouton "OK" séparé).
 
     Chaque étape a sa propre confirmation manuelle (système en production),
     activable via CONFIRMATION_MANUELLE=true.
 
-    Sélection de la piste (RessourceCombobox) toujours pas automatisée :
-    la piste actuellement sélectionnée par défaut dans Conqueror est utilisée.
+    Non gérés pour l'instant (à voir en Phase 4, cf. CDC section 3) :
+    sélection de la piste (RessourceCombobox - la piste par défaut est
+    utilisée), tarifs CE.
     """
     from pywinauto import Application  # import local : uniquement nécessaire en mode réel
 
@@ -85,15 +124,17 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
     # Sans confirmation manuelle, rien ne ramène plus Conqueror au premier
     # plan entre les étapes (avant, taper "o" dans le terminal le faisait
-    # indirectement) -> on le fait explicitement, sinon les clics partent
-    # dans le vide si une autre fenêtre (terminal, VS Code...) est active.
+    # indirectement) -> on le fait explicitement, sinon les clics/frappes
+    # partent dans le vide si une autre fenêtre (terminal, VS Code...) est
+    # active.
     fenetre.set_focus()
     time.sleep(0.3)
 
     nom = data.get("nom", "Test")
-    nb_joueurs = str(data.get("nbJoueurs", 1))
+    nb_parties = str(data.get("nbParties", 1))
+    joueurs = data.get("joueurs") or []
 
-    # --- Étape 1/3 : référence + "Sple Partie" ---
+    # --- Étape 1 : référence + "Sple Partie" ---
     champ_reference = fenetre.child_window(auto_id="RéférenceEntry", control_type="Edit")
     champ_reference.set_text(nom)
     print(f"[bot] Champ Référence rempli avec {nom!r}.")
@@ -114,104 +155,69 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     _cliquer(bouton_sple_partie)
     print("[bot] Clic 'Sple Partie' effectué.")
 
-    # --- Étape 2/3 : "Nbre joueurs" (attend la transition vers LaneControl) ---
-    bouton_nb_joueurs = fenetre.child_window(auto_id="btnNbre joueurs", control_type="Button")
-    bouton_nb_joueurs.wait("visible enabled", timeout=10)
+    # Attend la transition vers l'écran LaneControl (bouton "Ajout parties"
+    # utilisé comme simple indicateur que l'écran est bien chargé).
+    bouton_ajout_parties = fenetre.child_window(title="Ajout parties", control_type="Button")
+    bouton_ajout_parties.wait("visible enabled", timeout=10)
 
-    if CONFIRMATION_MANUELLE:
-        reponse2 = input("[bot] Étape 2/3 : cliquer 'Nbre joueurs'. Confirmer ? (o/N) : ").strip().lower()
-        if reponse2 != "o":
-            print("[bot] Annulé à l'étape 2 : piste ouverte, joueurs non configurés.")
-            return {"succes": True, "piste": data.get("piste"), "nomJoueur": nom, "etape": "arrete_avant_nb_joueurs"}
+    # --- Étape 2 : ajout des joueurs (saisie directe) ---
+    noms_appliques = []
+    if joueurs:
+        if CONFIRMATION_MANUELLE:
+            reponse2 = input(
+                f"[bot] Étape 2/3 : ajouter {len(joueurs)} joueur(s) "
+                f"({', '.join(j.get('nom', '?') for j in joueurs)}). Confirmer ? (o/N) : "
+            ).strip().lower()
+            if reponse2 != "o":
+                print("[bot] Annulé à l'étape 2 : aucun joueur ajouté.")
+                joueurs = []
 
-    _cliquer(bouton_nb_joueurs)
-    print("[bot] Clic 'Nbre joueurs' effectué.")
+        for info_joueur in joueurs:
+            nom_joueur = info_joueur.get("nom")
+            if not nom_joueur:
+                continue
+            try:
+                _ajouter_joueur(
+                    fenetre,
+                    nom_joueur,
+                    pointure=info_joueur.get("pointure"),
+                    bumpers=info_joueur.get("bumpers", False),
+                )
+                noms_appliques.append(nom_joueur)
+            except Exception as exc:
+                print(f"[bot] Échec ajout joueur {nom_joueur!r} : {exc}")
 
-    # --- Étape 3/3 : dialogue "Nombre de joueurs" (boutons 0-12 + OK) ---
-    # Les auto_id des boutons numériques sont des identifiants techniques
-    # volatils (changent à chaque session Conqueror) -> ciblage par texte
-    # visible ("1", "2"...), stable.
-    dialogue = fenetre.child_window(auto_id="dlg", control_type="Window")
-    dialogue.wait("visible enabled", timeout=10)
-
-    bouton_valeur = dialogue.child_window(title=nb_joueurs, control_type="Button")
-
+    # --- Étape 3 : "Ajout parties" -> dialogue "Nombre de parties" ---
     if CONFIRMATION_MANUELLE:
         reponse3 = input(
-            f"[bot] Étape 3/3 : sélectionner {nb_joueurs} joueur(s) puis OK. Confirmer ? (o/N) : "
+            f"[bot] Étape 3/3 : cliquer 'Ajout parties' et sélectionner {nb_parties}. Confirmer ? (o/N) : "
         ).strip().lower()
         if reponse3 != "o":
-            print("[bot] Annulé à l'étape 3 : nombre de joueurs non validé.")
+            print("[bot] Annulé à l'étape 3 : nombre de parties non configuré.")
             return {
                 "succes": True,
                 "piste": data.get("piste"),
                 "nomJoueur": nom,
-                "etape": "arrete_avant_validation_joueurs",
+                "joueurs": noms_appliques,
+                "etape": "arrete_avant_ajout_parties",
             }
 
-    _cliquer(bouton_valeur)
-    _cliquer(dialogue.child_window(auto_id="btnOK", control_type="Button"))
-    print(f"[bot] {nb_joueurs} joueur(s) validé(s).")
+    _cliquer(bouton_ajout_parties)
 
-    # --- Étape 4/4 : renommage des joueurs (optionnel, selon data["joueurs"]) ---
-    joueurs = data.get("joueurs") or []
-    noms_appliques = []
+    dialogue_parties = fenetre.child_window(auto_id="dlg", control_type="Window")
+    dialogue_parties.wait("visible enabled", timeout=10)
 
-    if joueurs:
-        if CONFIRMATION_MANUELLE:
-            reponse4 = input(
-                f"[bot] Étape 4/4 : configurer {len(joueurs)} joueur(s) "
-                f"({', '.join(j.get('nom', '?') for j in joueurs)}). Confirmer ? (o/N) : "
-            ).strip().lower()
-            if reponse4 != "o":
-                print("[bot] Annulé à l'étape 4 : joueurs laissés avec leur nom par défaut.")
-                joueurs = []
-
-        for index, info_joueur in enumerate(joueurs, start=1):
-            if index > int(nb_joueurs):
-                break  # sécurité : ne pas dépasser le nombre de joueurs réellement créés
-
-            nom_joueur = info_joueur.get("nom")
-            if not nom_joueur:
-                continue
-
-            nom_defaut = f"joueur{index}"
-            try:
-                _cliquer(fenetre.child_window(title=nom_defaut, control_type="Text"))
-            except Exception as exc:
-                print(f"[bot] Impossible de cliquer sur {nom_defaut!r} : {exc}")
-                continue
-
-            dialogue_joueur = fenetre.child_window(
-                title_re="Modifier les options du joueur.*", control_type="Window"
-            )
-            dialogue_joueur.wait("visible enabled", timeout=10)
-
-            champ_nom = dialogue_joueur.child_window(
-                auto_id="Nom (ou ID membre)Entry", control_type="Edit"
-            )
-            champ_nom.set_text(nom_joueur)
-
-            pointure = info_joueur.get("pointure")
-            if pointure:
-                champ_pointure = dialogue_joueur.child_window(auto_id="PointureEntry", control_type="Edit")
-                champ_pointure.set_text(str(pointure))
-
-            if info_joueur.get("bumpers"):
-                case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
-                if not case_bumpers.get_toggle_state():
-                    _cliquer(case_bumpers)
-
-            _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
-            print(f"[bot] Joueur {index} renommé en {nom_joueur!r}.")
-            noms_appliques.append(nom_joueur)
+    # Comme pour "Nbre joueurs" : le clic sur le chiffre valide directement,
+    # pas de bouton "OK" séparé à cliquer ensuite.
+    _cliquer(dialogue_parties.child_window(title=nb_parties, control_type="Button"))
+    print(f"[bot] {nb_parties} partie(s) configurée(s).")
 
     return {
         "succes": True,
         "piste": data.get("piste"),
         "nomJoueur": nom,
-        "nbJoueurs": nb_joueurs,
         "joueurs": noms_appliques,
+        "nbParties": nb_parties,
     }
 
 
