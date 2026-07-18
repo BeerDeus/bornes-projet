@@ -65,24 +65,25 @@ avant chaque clic effectif (`CONFIRMATION_MANUELLE=true` par défaut) — rien n
 tant que tu ne tapes pas "o". Idéalement, fais ce premier essai réel **hors heures
 d'ouverture / hors événement**, pas un samedi soir.
 
-1. Relancer le bot avec `SIMULATION_MODE=false` :
-   ```powershell
-   $env:SIMULATION_MODE="false"
-   python conqueror_bot.py
-   ```
-   Tu dois voir : `ATTENTION : mode réel actif...`
-2. Refaire le test depuis `index.html`. Le bot va :
-   - remplir le champ "Référence" avec "Test" (sans rien valider),
-   - te demander en console : `Prêt à cliquer sur 'Sple Partie'... Confirmer ? (o/N)`
-3. Vérifie sur l'écran Conqueror que le champ "Référence" contient bien "Test" au bon
-   endroit **avant** de répondre. Si tout est correct, tape `o` pour valider le clic.
-   Sinon, tape n'importe quoi d'autre pour annuler sans rien exécuter.
+Le parcours automatisé se fait en 3 étapes, **chacune avec sa propre confirmation** :
+
+1. `$env:SIMULATION_MODE="false"` puis `python conqueror_bot.py` — tu dois voir
+   `ATTENTION : mode réel actif...`.
+2. Déclencher le test depuis `index.html`. Le bot va, à chaque étape, remplir/cliquer
+   puis attendre ta validation en console avant de continuer :
+   - **Étape 1/3** : remplit "Référence" avec "Test" → demande confirmation avant de
+     cliquer "Sple Partie" (ouvre la piste).
+   - **Étape 2/3** : demande confirmation avant de cliquer "Nbre joueurs".
+   - **Étape 3/3** : demande confirmation avant de sélectionner le nombre de joueurs
+     (valeur envoyée par la borne, `nbJoueurs`) et de cliquer "OK".
+3. À chaque prompt, vérifie sur l'écran Conqueror que l'état correspond bien à ce qui
+   est annoncé **avant** de taper `o`. Toute autre touche annule cette étape sans rien
+   exécuter (les étapes précédentes déjà validées restent, elles, acquises).
 4. Note : la sélection de la piste (combo "Ressource") n'est pas encore automatisée —
-   le bouton "Ouvrir" utilisera la piste actuellement sélectionnée par défaut dans
-   Conqueror. À affiner une fois cette première validation faite.
+   la piste actuellement sélectionnée par défaut dans Conqueror est utilisée.
 
 Une fois plusieurs tests réels validés sans souci, `CONFIRMATION_MANUELLE=false`
-permettra de retirer cette confirmation (à faire consciemment, pas par défaut).
+permettra de retirer ces confirmations (à faire consciemment, pas par défaut).
 
 ## Pour tester depuis une vraie tablette Android
 
