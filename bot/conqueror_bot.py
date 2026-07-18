@@ -64,13 +64,13 @@ def _forcer_premier_plan(fenetre) -> bool:
     user32.keybd_event(0x12, 0, 0, 0)  # Alt down
     user32.keybd_event(0x12, 0, 0x0002, 0)  # Alt up
     user32.SetForegroundWindow(hwnd)
-    time.sleep(0.2)
+    time.sleep(0.1)
     reussi = user32.GetForegroundWindow() == hwnd
     print(f"[bot] Conqueror au premier plan : {'OK' if reussi else 'ÉCHEC'}")
     return reussi
 
 
-def _cliquer(controle, pause_avant_s: float = 0.3, pause_apres_s: float = 0.5):
+def _cliquer(controle, pause_avant_s: float = 0.1, pause_apres_s: float = 0.2):
     """
     Clic souris réel (click_input) avec pause avant/après, pour laisser le
     temps à Conqueror de finir de rendre l'écran avant le clic, et de
@@ -86,7 +86,7 @@ def _cliquer(controle, pause_avant_s: float = 0.3, pause_apres_s: float = 0.5):
 
 
 # --------------------------------------------------------------------------
-def _configurer_joueur(fenetre, nom_defaut, nom_joueur, pointure=None, bumpers=False):
+def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     """
     Renomme/configure un joueur existant (placeholder "joueurN" créé par le
     dialogue "Nbre joueurs") : clic sur son nom par défaut (souris, fiable)
@@ -111,10 +111,6 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, pointure=None, bumpers=F
     champ_nom = dialogue_joueur.child_window(auto_id="Nom (ou ID membre)Entry", control_type="Edit")
     champ_nom.set_text(nom_joueur)
 
-    if pointure:
-        champ_pointure = dialogue_joueur.child_window(auto_id="PointureEntry", control_type="Edit")
-        champ_pointure.set_text(str(pointure))
-
     if bumpers:
         case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
         if not case_bumpers.get_toggle_state():
@@ -138,8 +134,8 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
          placeholders "joueur1".."joueurN".
       3. Pour chaque joueur (data["joueurs"]) : clic sur son placeholder
          ("joueur1", "joueur2"...) -> dialogue "Modifier les options du
-         joueur..." -> nom (+ pointure/bumpers si fournis, via set_text(),
-         PAS de frappe clavier simulée) -> OK. Voir _configurer_joueur.
+         joueur..." -> nom (+ bumpers si fourni, via set_text(), PAS de
+         frappe clavier simulée) -> OK. Voir _configurer_joueur.
       4. Clic "Ajout parties" -> dialogue "Nombre de parties" (même
          comportement que "Nbre joueurs" : clic chiffre = validation
          directe).
@@ -239,7 +235,6 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                     fenetre,
                     f"joueur{index}",
                     nom_joueur,
-                    pointure=info_joueur.get("pointure"),
                     bumpers=info_joueur.get("bumpers", False),
                 )
                 noms_appliques.append(nom_joueur)
