@@ -66,6 +66,14 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
     app = Application(backend="uia").connect(title_re=".*Conqueror.*")
     fenetre = app.top_window()
+
+    # Sans confirmation manuelle, rien ne ramène plus Conqueror au premier
+    # plan entre les étapes (avant, taper "o" dans le terminal le faisait
+    # indirectement) -> on le fait explicitement, sinon les clics partent
+    # dans le vide si une autre fenêtre (terminal, VS Code...) est active.
+    fenetre.set_focus()
+    time.sleep(0.3)
+
     nom = data.get("nom", "Test")
     nb_joueurs = str(data.get("nbJoueurs", 1))
 
