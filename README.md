@@ -56,22 +56,33 @@ en bout. C'est le livrable de la Phase 1 (cf. Roadmap).
 
 ### 4. Passer en mode réel (seulement une fois le test simulé validé)
 
-1. Ouvrir Conqueror et repérer les vrais identifiants des boutons ("Nouvelle Partie",
-   champ de saisie du nom...) avec l'inspecteur pywinauto :
-   ```powershell
-   python -m pywinauto.actionlogger
-   ```
-   ou en important `Application(backend="uia").connect(...).print_control_identifiers()`
-   dans un script Python temporaire, Conqueror étant ouvert.
-2. Compléter les `TODO` dans `bot/conqueror_bot.py` (fonction
-   `ouvrir_nouvelle_partie_reelle`) avec les vrais sélecteurs trouvés.
-3. Relancer le bot avec `SIMULATION_MODE=false` :
+Les identifiants réels de Conqueror ont déjà été relevés (via `bot/inspect_conqueror.py`,
+écran "Liste d'attente") et intégrés dans `ouvrir_nouvelle_partie_reelle`.
+
+**Important : Conqueror ici est le système de PRODUCTION**, pas un environnement de
+test. Par sécurité, le mode réel demande une confirmation manuelle dans le terminal
+avant chaque clic effectif (`CONFIRMATION_MANUELLE=true` par défaut) — rien ne se passe
+tant que tu ne tapes pas "o". Idéalement, fais ce premier essai réel **hors heures
+d'ouverture / hors événement**, pas un samedi soir.
+
+1. Relancer le bot avec `SIMULATION_MODE=false` :
    ```powershell
    $env:SIMULATION_MODE="false"
    python conqueror_bot.py
    ```
-4. Refaire le test depuis `index.html`. Cette fois, ça doit réellement ouvrir une
-   piste dans Conqueror.
+   Tu dois voir : `ATTENTION : mode réel actif...`
+2. Refaire le test depuis `index.html`. Le bot va :
+   - remplir le champ "Référence" avec "Test" (sans rien valider),
+   - te demander en console : `Prêt à cliquer sur 'Ouvrir'... Confirmer ? (o/N)`
+3. Vérifie sur l'écran Conqueror que le champ "Référence" contient bien "Test" au bon
+   endroit **avant** de répondre. Si tout est correct, tape `o` pour valider le clic.
+   Sinon, tape n'importe quoi d'autre pour annuler sans rien exécuter.
+4. Note : la sélection de la piste (combo "Ressource") n'est pas encore automatisée —
+   le bouton "Ouvrir" utilisera la piste actuellement sélectionnée par défaut dans
+   Conqueror. À affiner une fois cette première validation faite.
+
+Une fois plusieurs tests réels validés sans souci, `CONFIRMATION_MANUELLE=false`
+permettra de retirer cette confirmation (à faire consciemment, pas par défaut).
 
 ## Pour tester depuis une vraie tablette Android
 

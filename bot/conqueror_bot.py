@@ -27,6 +27,10 @@ import socketio
 # --------------------------------------------------------------------------
 SERVEUR_URL = os.environ.get("SERVEUR_URL", "https://bowling.m2s-photo.fr")
 SIMULATION_MODE = os.environ.get("SIMULATION_MODE", "true").lower() != "false"
+# Tant que le mode réel n'a pas été validé plusieurs fois sans souci, on garde
+# une confirmation manuelle obligatoire avant tout clic réel dans Conqueror
+# (le bot est connecté au système de PRODUCTION, pas un environnement de test).
+CONFIRMATION_MANUELLE = os.environ.get("CONFIRMATION_MANUELLE", "true").lower() != "false"
 HEARTBEAT_INTERVAL_S = 3
 
 sio = socketio.Client()
@@ -38,24 +42,45 @@ sio = socketio.Client()
 def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     """
     Pilote réellement Conqueror via pywinauto.
-    À adapter avec les vrais identifiants UI de Conqueror (voir CDC 2.4 :
-    documenter la version logicielle + les sélecteurs utilisés).
+    Identifiants relevés le 2026-07-18 via bot/inspect_conqueror.py sur la
+    version 'QubicaAMF Conqueror X - 14.97.01' (écran Liste d'attente /
+    WaitingList). À revalider si Conqueror est mis à jour (cf. CDC 2.4).
+
+    Sélection de la piste (RessourceCombobox) volontairement pas encore
+    automatisée : comportement du combo (saisie directe vs liste déroulante)
+    pas encore confirmé en conditions réelles. Le bouton "Ouvrir" utilisera
+    donc la ressource actuellement sélectionnée par défaut dans Conqueror,
+    jusqu'à ce qu'on valide et ajoute la sélection automatique.
     """
     from pywinauto import Application  # import local : uniquement nécessaire en mode réel
 
-    # TODO: ajuster le titre exact de la fenêtre Conqueror
     app = Application(backend="uia").connect(title_re=".*Conqueror.*")
     fenetre = app.top_window()
 
-    # TODO: remplacer par les vrais identifiants (Button, Edit...) trouvés
-    # via l'inspecteur pywinauto (python -m pywinauto.actionlogger ou
-    # print_control_identifiers()) sur le poste Conqueror.
-    fenetre.child_window(title="Nouvelle Partie", control_type="Button").click_input()
-    champ_nom = fenetre.child_window(control_type="Edit")
-    champ_nom.set_text(data.get("nom", "Test"))
-    fenetre.child_window(title="Valider", control_type="Button").click_input()
+    champ_reference = fenetre.child_window(auto_id="RéférenceEntry", control_type="Edit")
+    nom = data.get("nom", "Test")
+    champ_reference.set_text(nom)
+    print(f"[bot] Champ Référence rempli avec {nom!r} (rien envoyé à Conqueror pour l'instant).")
 
-    return {"succes": True, "piste": None, "nomJoueur": data.get("nom")}
+    # TODO (prochaine itération) : sélectionner la piste via
+    # fenetre.child_window(auto_id="RessourceCombobox", control_type="ComboBox")
+    # une fois son comportement confirmé.
+
+    bouton_ouvrir = fenetre.child_window(auto_id="btnOuvrir", control_type="Button")
+
+    if CONFIRMATION_MANUELLE:
+        reponse = input(
+            "[bot] Prêt à cliquer sur 'Ouvrir' dans Conqueror avec la référence "
+            f"{nom!r}. Confirmer ? (o/N) : "
+        ).strip().lower()
+        if reponse != "o":
+            print("[bot] Annulé : aucun clic effectué dans Conqueror.")
+            return {"succes": False, "erreur": "annule_par_confirmation_manuelle"}
+
+    bouton_ouvrir.click_input()
+    print("[bot] Clic sur 'Ouvrir' effectué.")
+
+    return {"succes": True, "piste": data.get("piste"), "nomJoueur": nom}
 
 
 def ouvrir_nouvelle_partie_simulee(data: dict) -> dict:
