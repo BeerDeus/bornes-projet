@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>Test Borne - Phase 1</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  body { font-family: sans-serif; max-width: 480px; margin: 60px auto; text-align: center; }
+  button { font-size: 24px; padding: 20px 40px; border-radius: 12px; border: none; background: #2563eb; color: white; cursor: pointer; }
+  button:disabled { background: #9ca3af; }
+  #statut, #log { margin-top: 24px; text-align: left; white-space: pre-wrap; font-family: monospace; font-size: 13px; background: #f3f4f6; padding: 12px; border-radius: 8px; }
+</style>
+</head>
+<body>
+  <h2>Test Borne - Phase 1</h2>
+  <p id="botStatut">Bot : inconnu</p>
+  <button id="btnNouvellePartie">Nouvelle Partie</button>
+  <div id="log"></div>
+
+<script>
+  // Backend déployé sur Hostinger (voir README)
+  const SERVEUR_URL = "https://bowling.m2s-photo.fr";
+  const socket = io(SERVEUR_URL);
+  const logEl = document.getElementById("log");
+  const btn = document.getElementById("btnNouvellePartie");
+  const statutEl = document.getElementById("botStatut");
+
+  function log(msg) {
+    logEl.textContent += msg + "\n";
+  }
+
+  socket.on("connect", () => log("Connecté au serveur."));
+  socket.on("disconnect", () => log("Déconnecté du serveur."));
+
+  socket.on("bot_status", (s) => {
+    statutEl.textContent = "Bot : " + (s.connecte ? "connecté" : "déconnecté");
+  });
+
+  btn.addEventListener("click", () => {
+    btn.disabled = true;
+    log("Envoi commande nouvelle_partie...");
+    socket.emit("nouvelle_partie", { nom: "Test", nbJoueurs: 1 });
+  });
+
+  socket.on("nouvelle_partie_resultat", (resultat) => {
+    log("Résultat : " + JSON.stringify(resultat));
+    btn.disabled = false;
+  });
+</script>
+</body>
+</html>
