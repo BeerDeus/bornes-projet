@@ -70,17 +70,19 @@ def _forcer_premier_plan(fenetre) -> bool:
     return reussi
 
 
-def _cliquer(controle, pause_avant_s: float = 0.1, pause_apres_s: float = 0.2):
+def _cliquer(controle, timeout_attente_s: float = 5, pause_apres_s: float = 0.1):
     """
-    Clic souris réel (click_input) avec pause avant/après, pour laisser le
-    temps à Conqueror de finir de rendre l'écran avant le clic, et de
+    Attend que le contrôle soit prêt (vérifié environ toutes les 0,1s) et
+    clique dès qu'il est détecté, au lieu d'une pause fixe avant le clic
+    -> plus rapide quand Conqueror répond vite, toujours robuste quand il
+    est plus lent. Petite pause après le clic pour laisser le temps de
     traiter l'action avant l'étape suivante.
 
     Note : invoke() (API d'accessibilité, sans clic souris réel) a été
     essayé mais semble ne rien déclencher sur les boutons WPF custom de
     Conqueror (pas d'erreur, mais aucun effet) -> retour à click_input().
     """
-    time.sleep(pause_avant_s)
+    controle.wait("visible enabled", timeout=timeout_attente_s, retry_interval=0.1)
     controle.click_input()
     time.sleep(pause_apres_s)
 
@@ -120,6 +122,70 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}.")
 
 
+def _appliquer_tarif_ce(fenetre, nom_joueur):
+    """
+    Applique le tarif "CE" (Pass CE) à un seul joueur, sur l'écran
+    LaneControl :
+      1. Décoche la case "sélectionné" de tous les joueurs de la piste.
+      2. Coche uniquement celle du joueur concerné.
+      3. Clique "Tarifs" -> dialogue "Tarif par défaut..." -> clique "CE".
+
+    Repérage de la case à cocher : les cases n'ont ni texte ni auto_id
+    stable (identifiants techniques volatils, comme les boutons numériques
+    des dialogues 0-12). Sur la structure observée le 2026-07-18, chaque
+    joueur occupe un bloc de 9 éléments après son nom (3 cases, 3 textes de
+    statut/parties/totaux, 2 totaux, puis la case "sélectionné" en dernière
+    position, juste avant le nom du joueur suivant) -> on la retrouve par
+    position relative au Text du nom. Fragile si Conqueror change cette
+    disposition ; à revalider si ça ne fonctionne plus après une mise à
+    jour (cf. CDC 2.4).
+    """
+    DECALAGE_CASE_SELECTION = 9
+
+    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    enfants = lane_control.children()
+
+    # 1. Décoche toutes les cases à cocher de l'écran (piste + joueurs).
+    for enfant in enfants:
+        try:
+            if enfant.friendly_class_name() != "CheckBox":
+                continue
+            if enfant.get_toggle_state():
+                enfant.click_input()
+                time.sleep(0.05)
+        except Exception:
+            continue
+
+    # 2. Repère le nom du joueur, prend la case 9 positions plus loin.
+    index_nom = None
+    for i, enfant in enumerate(enfants):
+        try:
+            if enfant.friendly_class_name() == "Text" and enfant.window_text() == nom_joueur:
+                index_nom = i
+                break
+        except Exception:
+            continue
+
+    if index_nom is None or index_nom + DECALAGE_CASE_SELECTION >= len(enfants):
+        raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
+
+    case_joueur = enfants[index_nom + DECALAGE_CASE_SELECTION]
+    if case_joueur.friendly_class_name() != "CheckBox":
+        raise RuntimeError(
+            f"Élément inattendu à la position 'case sélectionnée' du joueur {nom_joueur!r} : "
+            f"{case_joueur.friendly_class_name()} (structure Conqueror probablement différente)"
+        )
+
+    case_joueur.click_input()
+    time.sleep(0.1)
+
+    # 3. "Tarifs" -> dialogue "Tarif par défaut..." -> "CE"
+    _cliquer(fenetre.child_window(auto_id="btnTarifs", control_type="Button"))
+    dialogue_tarif = fenetre.child_window(auto_id="DlgSelectPrice", control_type="Window")
+    _cliquer(dialogue_tarif.child_window(title="CE", control_type="Button"))
+    print(f"[bot] Tarif CE appliqué à {nom_joueur!r}.")
+
+
 def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     """
     Pilote réellement Conqueror via pywinauto.
@@ -135,7 +201,9 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
       3. Pour chaque joueur (data["joueurs"]) : clic sur son placeholder
          ("joueur1", "joueur2"...) -> dialogue "Modifier les options du
          joueur..." -> nom (+ bumpers si fourni, via set_text(), PAS de
-         frappe clavier simulée) -> OK. Voir _configurer_joueur.
+         frappe clavier simulée) -> OK. Voir _configurer_joueur. Si le
+         joueur a "passCE": true, applique en plus le tarif CE (voir
+         _appliquer_tarif_ce : décoche tout, coche ce joueur, Tarifs, CE).
       4. Clic "Ajout parties" -> dialogue "Nombre de parties" (même
          comportement que "Nbre joueurs" : clic chiffre = validation
          directe).
@@ -152,9 +220,9 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     Chaque étape a sa propre confirmation manuelle (système en production),
     activable via CONFIRMATION_MANUELLE=true.
 
-    Non gérés pour l'instant (à voir en Phase 4, cf. CDC section 3) :
+    Non géré pour l'instant (à voir en Phase 4, cf. CDC section 3) :
     sélection de la piste (RessourceCombobox - la piste par défaut est
-    utilisée), tarifs CE.
+    utilisée).
     """
     from pywinauto import Application  # import local : uniquement nécessaire en mode réel
 
@@ -194,9 +262,9 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     _cliquer(bouton_sple_partie)
     print("[bot] Clic 'Sple Partie' effectué.")
 
-    # Attend la transition vers l'écran LaneControl.
+    # bouton_nb_joueurs : _cliquer() attendra lui-même la transition vers
+    # l'écran LaneControl (polling ~0,1s) avant de cliquer.
     bouton_nb_joueurs = fenetre.child_window(auto_id="btnNbre joueurs", control_type="Button")
-    bouton_nb_joueurs.wait("visible enabled", timeout=10)
 
     # --- Étape 2/4 : "Nbre joueurs" -> dialogue "dlg" (validation directe) ---
     if CONFIRMATION_MANUELLE:
@@ -210,7 +278,6 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     _cliquer(bouton_nb_joueurs)
 
     dialogue_nb = fenetre.child_window(auto_id="dlg", control_type="Window")
-    dialogue_nb.wait("visible enabled", timeout=10)
     _cliquer(dialogue_nb.child_window(title=nb_joueurs, control_type="Button"))
     print(f"[bot] {nb_joueurs} joueur(s) créé(s) (placeholders).")
 
@@ -238,6 +305,12 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                     bumpers=info_joueur.get("bumpers", False),
                 )
                 noms_appliques.append(nom_joueur)
+
+                if info_joueur.get("passCE"):
+                    try:
+                        _appliquer_tarif_ce(fenetre, nom_joueur)
+                    except Exception as exc:
+                        print(f"[bot] Échec application tarif CE pour {nom_joueur!r} : {exc}")
             except Exception as exc:
                 print(f"[bot] Échec configuration joueur {nom_joueur!r} : {exc}")
 
@@ -261,7 +334,6 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     _cliquer(bouton_ajout_parties)
 
     dialogue_parties = fenetre.child_window(auto_id="dlg", control_type="Window")
-    dialogue_parties.wait("visible enabled", timeout=10)
     _cliquer(dialogue_parties.child_window(title=nb_parties, control_type="Button"))
     print(f"[bot] {nb_parties} partie(s) configurée(s).")
 
