@@ -43,7 +43,48 @@ else:
     cible = candidats[0]
 
 print(f"\n=== Arbre des contrôles de : {cible.window_text()!r} ===\n")
-cible.print_control_identifiers()
+
+# Parcours manuel (plus robuste que print_control_identifiers, qui n'est pas
+# disponible sur toutes les versions/wrappers de pywinauto).
+COMPTEUR_MAX = 3000  # garde-fou anti-flood si l'arbre est énorme
+compteur = 0
+
+
+def dump(ctrl, depth=0):
+    global compteur
+    if compteur >= COMPTEUR_MAX:
+        return
+    compteur += 1
+
+    try:
+        texte = ctrl.window_text()
+    except Exception:
+        texte = ""
+    try:
+        control_type = ctrl.element_info.control_type
+    except Exception:
+        control_type = ctrl.friendly_class_name()
+    try:
+        auto_id = ctrl.element_info.automation_id
+    except Exception:
+        auto_id = ""
+
+    print("  " * depth + f"- [{control_type}] texte={texte!r} auto_id={auto_id!r}")
+
+    try:
+        enfants = ctrl.children()
+    except Exception as exc:
+        print("  " * (depth + 1) + f"(erreur lecture des enfants: {exc})")
+        return
+
+    for enfant in enfants:
+        dump(enfant, depth + 1)
+
+
+dump(cible)
+
+if compteur >= COMPTEUR_MAX:
+    print(f"\n(arrêté après {COMPTEUR_MAX} éléments, arbre probablement très grand)")
 
 print(
     "\n\nCopie tout ce qui précède (depuis '=== Arbre des contrôles') "
