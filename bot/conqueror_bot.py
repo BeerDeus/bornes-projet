@@ -48,9 +48,9 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
     Sélection de la piste (RessourceCombobox) volontairement pas encore
     automatisée : comportement du combo (saisie directe vs liste déroulante)
-    pas encore confirmé en conditions réelles. Le bouton "Ouvrir" utilisera
-    donc la ressource actuellement sélectionnée par défaut dans Conqueror,
-    jusqu'à ce qu'on valide et ajoute la sélection automatique.
+    pas encore confirmé en conditions réelles. Le bouton "Sple Partie" (partie
+    simple) utilisera donc la ressource actuellement sélectionnée par défaut
+    dans Conqueror, jusqu'à ce qu'on valide et ajoute la sélection automatique.
     """
     from pywinauto import Application  # import local : uniquement nécessaire en mode réel
 
@@ -66,19 +66,22 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     # fenetre.child_window(auto_id="RessourceCombobox", control_type="ComboBox")
     # une fois son comportement confirmé.
 
-    bouton_ouvrir = fenetre.child_window(auto_id="btnOuvrir", control_type="Button")
+    # Note : "Sple Partie", "Dble Partie", "Sple Temps", "Dble Temps", "Retire"
+    # partagent tous le même auto_id générique ('btn') dans Conqueror -> on cible
+    # par titre visible, pas par auto_id, pour ce bouton précis.
+    bouton_action = fenetre.child_window(title="Sple Partie", control_type="Button")
 
     if CONFIRMATION_MANUELLE:
         reponse = input(
-            "[bot] Prêt à cliquer sur 'Ouvrir' dans Conqueror avec la référence "
+            "[bot] Prêt à cliquer sur 'Sple Partie' dans Conqueror avec la référence "
             f"{nom!r}. Confirmer ? (o/N) : "
         ).strip().lower()
         if reponse != "o":
             print("[bot] Annulé : aucun clic effectué dans Conqueror.")
             return {"succes": False, "erreur": "annule_par_confirmation_manuelle"}
 
-    bouton_ouvrir.click_input()
-    print("[bot] Clic sur 'Ouvrir' effectué.")
+    bouton_action.click_input()
+    print("[bot] Clic sur 'Sple Partie' effectué.")
 
     return {"succes": True, "piste": data.get("piste"), "nomJoueur": nom}
 

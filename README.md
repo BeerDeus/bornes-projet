@@ -73,7 +73,7 @@ d'ouverture / hors événement**, pas un samedi soir.
    Tu dois voir : `ATTENTION : mode réel actif...`
 2. Refaire le test depuis `index.html`. Le bot va :
    - remplir le champ "Référence" avec "Test" (sans rien valider),
-   - te demander en console : `Prêt à cliquer sur 'Ouvrir'... Confirmer ? (o/N)`
+   - te demander en console : `Prêt à cliquer sur 'Sple Partie'... Confirmer ? (o/N)`
 3. Vérifie sur l'écran Conqueror que le champ "Référence" contient bien "Test" au bon
    endroit **avant** de répondre. Si tout est correct, tape `o` pour valider le clic.
    Sinon, tape n'importe quoi d'autre pour annuler sans rien exécuter.
