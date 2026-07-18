@@ -39,7 +39,14 @@
   btn.addEventListener("click", () => {
     btn.disabled = true;
     log("Envoi commande nouvelle_partie...");
-    socket.emit("nouvelle_partie", { nom: "Test", nbJoueurs: 1 });
+    socket.emit("nouvelle_partie", {
+      nom: "Test",
+      nbJoueurs: 2,
+      joueurs: [
+        { nom: "Alice", pointure: "38" },
+        { nom: "Bob", bumpers: true },
+      ],
+    });
   });
 
   socket.on("nouvelle_partie_resultat", (resultat) => {

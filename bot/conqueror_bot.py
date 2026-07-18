@@ -27,10 +27,11 @@ import socketio
 # --------------------------------------------------------------------------
 SERVEUR_URL = os.environ.get("SERVEUR_URL", "https://bowling.m2s-photo.fr")
 SIMULATION_MODE = os.environ.get("SIMULATION_MODE", "true").lower() != "false"
-# Tant que le mode réel n'a pas été validé plusieurs fois sans souci, on garde
-# une confirmation manuelle obligatoire avant tout clic réel dans Conqueror
-# (le bot est connecté au système de PRODUCTION, pas un environnement de test).
-CONFIRMATION_MANUELLE = os.environ.get("CONFIRMATION_MANUELLE", "true").lower() != "false"
+# Confirmation manuelle avant chaque clic réel dans Conqueror. Désactivée par
+# défaut depuis validation du parcours Sple Partie -> Nbre joueurs -> OK.
+# Remettre à "true" (CONFIRMATION_MANUELLE=true) pour tout nouveau parcours
+# pas encore validé, ou avant un vrai passage en service (cf. CDC 2.4).
+CONFIRMATION_MANUELLE = os.environ.get("CONFIRMATION_MANUELLE", "false").lower() != "false"
 HEARTBEAT_INTERVAL_S = 3
 
 sio = socketio.Client()
@@ -51,8 +52,12 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
       2. Écran "LaneControl" : clic "Nbre joueurs" (ouvre le dialogue "dlg").
       3. Dialogue "Nombre de joueurs" : boutons 0 à 12 (un bouton = un total
          de joueurs, pas une saisie chiffre par chiffre), puis "OK".
+      4. Pour chaque joueur (data["joueurs"]) : clic sur son nom par défaut
+         ("joueur1", "joueur2"...) -> dialogue "Modifier les options du
+         joueur..." -> saisie nom réel (+ pointure/bumpers si fournis) -> OK.
 
-    Chaque étape a sa propre confirmation manuelle (système en production).
+    Chaque étape a sa propre confirmation manuelle (système en production),
+    activable via CONFIRMATION_MANUELLE=true.
 
     Sélection de la piste (RessourceCombobox) toujours pas automatisée :
     la piste actuellement sélectionnée par défaut dans Conqueror est utilisée.
@@ -124,13 +129,76 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     dialogue.child_window(auto_id="btnOK", control_type="Button").click_input()
     print(f"[bot] {nb_joueurs} joueur(s) validé(s).")
 
-    return {"succes": True, "piste": data.get("piste"), "nomJoueur": nom, "nbJoueurs": nb_joueurs}
+    # --- Étape 4/4 : renommage des joueurs (optionnel, selon data["joueurs"]) ---
+    joueurs = data.get("joueurs") or []
+    noms_appliques = []
+
+    if joueurs:
+        if CONFIRMATION_MANUELLE:
+            reponse4 = input(
+                f"[bot] Étape 4/4 : configurer {len(joueurs)} joueur(s) "
+                f"({', '.join(j.get('nom', '?') for j in joueurs)}). Confirmer ? (o/N) : "
+            ).strip().lower()
+            if reponse4 != "o":
+                print("[bot] Annulé à l'étape 4 : joueurs laissés avec leur nom par défaut.")
+                joueurs = []
+
+        for index, info_joueur in enumerate(joueurs, start=1):
+            if index > int(nb_joueurs):
+                break  # sécurité : ne pas dépasser le nombre de joueurs réellement créés
+
+            nom_joueur = info_joueur.get("nom")
+            if not nom_joueur:
+                continue
+
+            nom_defaut = f"joueur{index}"
+            try:
+                fenetre.child_window(title=nom_defaut, control_type="Text").click_input()
+            except Exception as exc:
+                print(f"[bot] Impossible de cliquer sur {nom_defaut!r} : {exc}")
+                continue
+
+            dialogue_joueur = fenetre.child_window(
+                title_re="Modifier les options du joueur.*", control_type="Window"
+            )
+            dialogue_joueur.wait("visible enabled", timeout=10)
+
+            champ_nom = dialogue_joueur.child_window(
+                auto_id="Nom (ou ID membre)Entry", control_type="Edit"
+            )
+            champ_nom.set_text(nom_joueur)
+
+            pointure = info_joueur.get("pointure")
+            if pointure:
+                champ_pointure = dialogue_joueur.child_window(auto_id="PointureEntry", control_type="Edit")
+                champ_pointure.set_text(str(pointure))
+
+            if info_joueur.get("bumpers"):
+                case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
+                if not case_bumpers.get_toggle_state():
+                    case_bumpers.click_input()
+
+            dialogue_joueur.child_window(auto_id="btnOK", control_type="Button").click_input()
+            print(f"[bot] Joueur {index} renommé en {nom_joueur!r}.")
+            noms_appliques.append(nom_joueur)
+
+    return {
+        "succes": True,
+        "piste": data.get("piste"),
+        "nomJoueur": nom,
+        "nbJoueurs": nb_joueurs,
+        "joueurs": noms_appliques,
+    }
 
 
 def ouvrir_nouvelle_partie_simulee(data: dict) -> dict:
-    print(f"[SIMULATION] Ouverture piste + saisie nom '{data.get('nom')}' (aucune action réelle sur Conqueror)")
+    joueurs = [j.get("nom") for j in data.get("joueurs", []) if j.get("nom")]
+    print(
+        f"[SIMULATION] Ouverture piste + saisie nom '{data.get('nom')}' "
+        f"+ joueurs {joueurs} (aucune action réelle sur Conqueror)"
+    )
     time.sleep(0.5)
-    return {"succes": True, "piste": 3, "nomJoueur": data.get("nom"), "simule": True}
+    return {"succes": True, "piste": 3, "nomJoueur": data.get("nom"), "joueurs": joueurs, "simule": True}
 
 
 def executer_commande(data: dict) -> dict:
