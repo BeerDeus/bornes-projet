@@ -194,6 +194,18 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
             _cliquer(case_bumpers)
 
     _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
+
+    # Attend la fermeture effective du dialogue (pas juste le clic) avant de
+    # continuer : signal minimal que Conqueror a traité l'enregistrement,
+    # utile en amont de _appliquer_tarif_ce qui doit ensuite retrouver le
+    # joueur par son nouveau nom sur LaneControl (cf. sa docstring - le
+    # rafraîchissement de ce nom peut prendre plusieurs secondes après la
+    # fermeture du dialogue, observé le 2026-07-19 sur 'Bob').
+    try:
+        dialogue_joueur.wait_not("visible", timeout=5, retry_interval=0.05)
+    except Exception as exc:
+        print(f"[bot][debug] Dialogue joueur {nom_defaut!r} toujours visible après OK ? ({exc})")
+
     print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}.")
 
 
@@ -231,8 +243,13 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
     l'affichage.
     """
     DECALAGE_CASE_SELECTION = 9
-    ATTENTE_NOM_MAX_S = 1.5
-    ATTENTE_NOM_INTERVALLE_S = 0.05
+    # Remonté de 1.5s -> 6s le 2026-07-19 : scan auto-diagnostic
+    # (auto_echec_CE_Bob_20260719_133009.txt) confirmant que le nom 'Bob'
+    # ET la structure +9 attendue étaient bien corrects, mais rafraîchis sur
+    # LaneControl après l'expiration du timeout précédent -> le problème
+    # était la durée d'attente, pas la logique de recherche.
+    ATTENTE_NOM_MAX_S = 6.0
+    ATTENTE_NOM_INTERVALLE_S = 0.1
 
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
     print(f"[bot][debug] --- Début application CE pour {nom_joueur!r} (défaut {nom_defaut!r}) ---")
