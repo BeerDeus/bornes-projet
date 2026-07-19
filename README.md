@@ -1,6 +1,14 @@
-# Phase 1 - Preuve de Concept (Borne ↔ Backend ↔ Bot Conqueror)
+# Bornes Bowling - Phase 1 (validée) + Phase 2 (en cours)
 
-Ce dossier contient le code testé pour la Phase 1 de la Roadmap.
+Ce dossier contient le code Phase 1 (Borne ↔ Backend ↔ Bot Conqueror, validée)
+et le début de la Phase 2 (BDD PostgreSQL + API catalogue/commandes bar,
+app-borne React). Voir `Roadmap_Projet_Bornes.txt` pour le détail.
+
+Contexte Phase 2 : pas encore d'accès à l'API Trivec ni à une tablette
+Android à ce jour. `backend/` et `app-borne/` sont développés et testables
+via navigateur ; l'intégration Trivec tourne en mode mock (articles bar
+temporaires en base) en attendant l'accès réel - voir `backend/README.md`
+(à créer si besoin) et `backend/src/trivec/client.js`.
 
 ## Architecture actuelle
 
@@ -65,27 +73,29 @@ avant chaque clic effectif (`CONFIRMATION_MANUELLE=true` par défaut) — rien n
 tant que tu ne tapes pas "o". Idéalement, fais ce premier essai réel **hors heures
 d'ouverture / hors événement**, pas un samedi soir.
 
-Le parcours automatisé se fait en 3 étapes (`CONFIRMATION_MANUELLE=true` pour une
-confirmation avant chaque étape, désactivé par défaut une fois le parcours validé) :
+Le parcours automatisé (validé en conditions réelles, cf. `bot/conqueror_bot.py` et
+Roadmap Phase 1) :
 
 1. Remplit "Référence" puis clique "Sple Partie" (ouvre la piste, écran LaneControl).
-2. Pour chaque joueur envoyé par la borne (`joueurs`) : tape directement son nom au
-   clavier (ouvre le dialogue "Modifier les options du joueur..."), renseigne la
-   pointure/les bumpers si fournis, clique "OK". Pas de dialogue "Nbre joueurs" : les
-   joueurs sont ajoutés un par un par saisie directe.
-3. Clique "Ajout parties" → dialogue "Nombre de parties" → sélectionne la valeur
-   envoyée par la borne (`nbParties`). Comme pour la sélection du nombre de joueurs
-   (abandonnée au profit de la saisie directe), cliquer sur le chiffre valide
-   directement, pas de bouton "OK" séparé.
+2. Clique "Nbre joueurs" → dialogue "dlg" → sélectionne le nombre (crée des
+   placeholders "joueur1".."joueurN").
+3. Pour chaque joueur (`data.joueurs`) : renomme son placeholder (`set_text`, pas de
+   frappe clavier simulée - Conqueror filtre l'injection clavier) + bumpers si fourni.
+4. Pour chaque joueur : clique sa cellule "Parties" → fenêtre PDV dédiée → sélectionne
+   son tarif (`CE` / `1` / `2` / `3` / `2+1`) et son nombre de parties.
+5. Optionnel (`data.payer: true`) : clique "Payer" → "Paye" (validé sur tarif CE/0€
+   uniquement pour l'instant).
 
 Non géré pour l'instant (prévu en Phase 4, cf. Cahier des Charges section 3) :
-sélection de la piste (la piste par défaut est utilisée), tarifs CE.
+sélection de la piste (la piste par défaut est utilisée), mode de paiement TPE avant
+"Paye" (seul le cas 0€ est validé).
 
 ## Pour tester depuis une vraie tablette Android
 
-Comme le backend est public (Hostinger), `test-client/index.html` fonctionne depuis
-n'importe quel appareil avec un navigateur (tablette, téléphone), pas besoin d'être sur
-le même réseau Wi-Fi que le PC Conqueror. Seul le bot doit rester sur ce PC.
+Comme le backend est public (Hostinger), `test-client/index.html` (Phase 1) et
+`app-borne/` (Phase 2, catalogue bar + panier + mêmes scénarios bowling) fonctionnent
+depuis n'importe quel appareil avec un navigateur (tablette, téléphone), pas besoin
+d'être sur le même réseau Wi-Fi que le PC Conqueror. Seul le bot doit rester sur ce PC.
 
 ## Si ça ne marche pas
 
