@@ -319,7 +319,16 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
     ATTENTE_STRUCTURE_MAX_S = 5.0
     ATTENTE_STRUCTURE_INTERVALLE_S = 0.1
 
-    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    # Résolu UNE SEULE fois (cf. _attendre_pret) : lane_control.children() est
+    # ensuite un appel UIA natif bon marché à chaque tentative de la boucle,
+    # au lieu de re-déclencher toute la chaîne fenetre -> LaneControl à
+    # chaque itération (même coût que le bug corrigé ailleurs dans ce
+    # fichier - cf. _cliquer_placeholder_joueur / _appliquer_tarif_parties).
+    lane_control = _attendre_pret(
+        fenetre.child_window(auto_id="LaneControl", control_type="Window"),
+        timeout_s=3,
+        intervalle_s=0.01,
+    )
 
     derniere_erreur = None
     boutons_vus = []
@@ -413,8 +422,12 @@ def _trouver_cellule_ligne(lane_control, element_ligne, colonne_titre):
     changé. Approche non encore validée en conditions réelles (déduite du
     scan, pas testable depuis cet environnement) -> à surveiller au premier
     usage réel.
+
+    `lane_control` est attendu DÉJÀ RÉSOLU (BaseWrapper, cf. appelants) -
+    _enfant() est donc utilisé pour l'en-tête de colonne plutôt que
+    .child_window() (qui n'existe pas sur un élément déjà résolu).
     """
-    entete = lane_control.child_window(title=colonne_titre, control_type="Text")
+    entete = _enfant(lane_control, control_type="Text", title=colonne_titre)
     rect_entete = entete.rectangle()
     rect_ligne = element_ligne.rectangle()
 
@@ -455,12 +468,18 @@ def _cliquer_placeholder_joueur(fenetre, index_joueur, nom_defaut):
     seulement dans le cas précis où on sait que ça peut arriver (joueurs
     suivants, après une vente). Le meilleur des deux, plutôt qu'un choix
     entre l'un ou l'autre.
+
+    Perf 2026-07-19 : utilisait encore candidat.wait(...) directement sur
+    un WindowSpecification (oublié lors de l'introduction de
+    _attendre_pret ailleurs) - repassait donc par une résolution complète
+    de TOUTE la chaîne (fenetre -> LaneControl -> titre) à chaque poll,
+    exactement le coût qu'on a éliminé partout ailleurs. Fix : _attendre_pret.
     """
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
 
     try:
-        candidat = lane_control.child_window(title=nom_defaut, control_type="Text")
-        candidat.wait("visible enabled", timeout=2, retry_interval=0.05)
+        candidat_spec = lane_control.child_window(title=nom_defaut, control_type="Text")
+        candidat = _attendre_pret(candidat_spec, timeout_s=2, intervalle_s=0.01)
         candidat.click_input()
         print(f"[bot][debug] {nom_defaut!r} : placeholder trouvé par titre.")
         return
@@ -655,7 +674,11 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
         f"tarif={tarif!r} -> bouton {titre_bouton!r} x{nb_clics} ---"
     )
 
-    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    # Résolution UNIQUE de LaneControl (cf. _attendre_pret) : évite de
+    # relancer une résolution complète (fenetre -> LaneControl) à chaque
+    # .children()/.child_window() comme avant (perf 2026-07-19, même
+    # correctif que _cliquer_placeholder_joueur).
+    lane_control = _attendre_pret(fenetre.child_window(auto_id="LaneControl", control_type="Window"), timeout_s=3, intervalle_s=0.01)
 
     try:
         candidats = _elements_par_nom(lane_control, nom_joueur)
