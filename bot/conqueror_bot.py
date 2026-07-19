@@ -559,8 +559,15 @@ TARIFS_PARTIES = {
     "2+1": "2+1(3)",
 }
 
+# Tarifs "combo" : un seul clic représente déjà plusieurs parties (le
+# nombre entre parenthèses dans le titre du bouton). Pour ceux-ci,
+# "parties" dans la commande n'entraîne PAS de clics supplémentaires
+# (contrairement à "CE"/"1", tarifs à l'unité, cf. nb_clics dans
+# _appliquer_tarif_parties).
+TARIFS_COMBO = {"2", "3", "2+1"}
 
-def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tarif):
+
+def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tarif, nb_clics=1):
     """
     Sélectionne le tarif + nombre de parties d'UN joueur, sur l'écran
     LaneControl, en cliquant directement sur sa cellule "Parties" (colonne
@@ -598,6 +605,15 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
     que la piste est encore "vierge", où le repérage positionnel de
     _cliquer_placeholder_joueur reste fiable), puis tous les tarifs.
 
+    nb_clics : nombre de fois où cliquer sur le bouton `tarif` avant de
+    valider (OK), pour les tarifs "à l'unité" (CE, 1 partie...) qui n'ont
+    pas de bouton combo dédié pour plusieurs parties - ex: 2 parties payées
+    en CE = 2 clics sur "CE" (chaque clic ajoute une ligne/unité dans le
+    panier PDV), alors que "2 parties(2)" est déjà un combo à 1 seul clic
+    (nb_clics=1, valeur par défaut, ne pas multiplier). Ajouté le
+    2026-07-19 pour le scénario de test à 7 joueurs de Beer (2 joueurs sur
+    7 payent 2 parties en CE).
+
     ATTENTION : méthode déduite de bot/scans/affichage_parties.txt, pas
     encore validée en conditions réelles depuis cet environnement (pas
     d'accès direct à Conqueror) -> à tester en premier avec
@@ -609,10 +625,11 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
         raise RuntimeError(
             f"Tarif {tarif!r} inconnu pour {nom_joueur!r} (valeurs acceptées : {sorted(TARIFS_PARTIES)})"
         )
+    nb_clics = max(1, int(nb_clics))
 
     print(
         f"[bot][debug] --- Parties pour {nom_joueur!r} (joueur #{index_joueur}, défaut {nom_defaut!r}) : "
-        f"tarif={tarif!r} -> bouton {titre_bouton!r} ---"
+        f"tarif={tarif!r} -> bouton {titre_bouton!r} x{nb_clics} ---"
     )
 
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
@@ -667,7 +684,16 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
     try:
         grille_produits = _enfant(fenetre_pdv, control_type="Pane", auto_id="gridProducts")
         bouton_tarif = _enfant(grille_produits, control_type="Button", title=titre_bouton)
-        _cliquer(bouton_tarif)
+
+        # nb_clics répétitions du MÊME bouton (déjà résolu, cf. _enfant) :
+        # chaque clic ajoute une unité au panier PDV - nécessaire pour les
+        # tarifs à l'unité (CE, 1 partie) quand on veut plusieurs parties
+        # sans bouton combo dédié (ex: 2 parties en CE = 2 clics sur "CE").
+        # Petite pause entre les clics pour laisser le panier se mettre à
+        # jour avant le suivant.
+        for i in range(nb_clics):
+            _cliquer(bouton_tarif, pause_apres_s=0.08)
+            print(f"[bot][debug] {nom_joueur!r} : clic {i + 1}/{nb_clics} sur {titre_bouton!r}.")
 
         _cliquer(_enfant(fenetre_pdv, control_type="Button", auto_id="btnPayment"))
 
@@ -833,6 +859,13 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                 continue
             nom_defaut = f"joueur{index}"
             tarif_joueur = info_joueur.get("tarif", "1")
+            # "parties" (nb de parties souhaitées) ne compte comme nombre de
+            # CLICS que pour les tarifs "à l'unité" (CE, 1 partie) - les
+            # tarifs combo (2/3/2+1) représentent déjà plusieurs parties en
+            # un seul clic, donc pas de multiplication même si "parties" est
+            # fourni. Voir _appliquer_tarif_parties (nb_clics).
+            nb_parties_joueur = max(1, int(info_joueur.get("parties", 1)))
+            nb_clics_joueur = 1 if tarif_joueur in TARIFS_COMBO else nb_parties_joueur
             try:
                 _configurer_joueur(
                     fenetre,
@@ -842,15 +875,15 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                     bumpers=info_joueur.get("bumpers", False),
                 )
                 noms_appliques.append(nom_joueur)
-                tarifs_a_appliquer.append((index, nom_defaut, nom_joueur, tarif_joueur))
+                tarifs_a_appliquer.append((index, nom_defaut, nom_joueur, tarif_joueur, nb_clics_joueur))
             except Exception as exc:
                 print(f"[bot] Échec configuration joueur {nom_joueur!r} : {exc}")
 
         # --- Passe 2 : tous les tarifs (uniquement les joueurs renommés avec succès) ---
-        for index, nom_defaut, nom_joueur, tarif_joueur in tarifs_a_appliquer:
+        for index, nom_defaut, nom_joueur, tarif_joueur, nb_clics_joueur in tarifs_a_appliquer:
             try:
-                _appliquer_tarif_parties(fenetre, index, nom_defaut, nom_joueur, tarif_joueur)
-                tarifs_appliques[nom_joueur] = tarif_joueur
+                _appliquer_tarif_parties(fenetre, index, nom_defaut, nom_joueur, tarif_joueur, nb_clics=nb_clics_joueur)
+                tarifs_appliques[nom_joueur] = f"{tarif_joueur} x{nb_clics_joueur}" if nb_clics_joueur > 1 else tarif_joueur
             except Exception as exc:
                 print(f"[bot] Échec application tarif {tarif_joueur!r} pour {nom_joueur!r} : {exc}")
 

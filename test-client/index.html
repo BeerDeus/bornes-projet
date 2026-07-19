@@ -14,7 +14,8 @@
 <body>
   <h2>Test Borne - Phase 1</h2>
   <p id="botStatut">Bot : inconnu</p>
-  <button id="btnNouvellePartie">Nouvelle Partie</button>
+  <button id="btnNouvellePartie">Nouvelle Partie (2 joueurs)</button>
+  <button id="btnTest7Joueurs">Test 7 joueurs (2 parties chacun, 2 en CE)</button>
   <div id="log"></div>
 
 <script>
@@ -23,10 +24,18 @@
   const socket = io(SERVEUR_URL);
   const logEl = document.getElementById("log");
   const btn = document.getElementById("btnNouvellePartie");
+  const btn7 = document.getElementById("btnTest7Joueurs");
   const statutEl = document.getElementById("botStatut");
 
   function log(msg) {
     logEl.textContent += msg + "\n";
+  }
+
+  function envoyer(commande) {
+    btn.disabled = true;
+    btn7.disabled = true;
+    log("Envoi commande nouvelle_partie...");
+    socket.emit("nouvelle_partie", commande);
   }
 
   socket.on("connect", () => log("Connecté au serveur."));
@@ -37,9 +46,7 @@
   });
 
   btn.addEventListener("click", () => {
-    btn.disabled = true;
-    log("Envoi commande nouvelle_partie...");
-    socket.emit("nouvelle_partie", {
+    envoyer({
       nom: "Test",
       joueurs: [
         { nom: "Alice", tarif: "1" },
@@ -48,9 +55,28 @@
     });
   });
 
+  // Scénario demandé le 2026-07-19 : 7 joueurs, tous 2 parties, dont 2 en
+  // CE (pas de bouton combo "2 parties" en CE -> 2 clics sur "CE" via
+  // parties: 2, cf. _appliquer_tarif_parties / nb_clics côté bot).
+  btn7.addEventListener("click", () => {
+    envoyer({
+      nom: "Test7",
+      joueurs: [
+        { nom: "Alice", tarif: "2", parties: 2 },
+        { nom: "Bob", tarif: "CE", parties: 2 },
+        { nom: "Carla", tarif: "2", parties: 2 },
+        { nom: "David", tarif: "2", parties: 2 },
+        { nom: "Emma", tarif: "CE", parties: 2 },
+        { nom: "Felix", tarif: "2", parties: 2 },
+        { nom: "Gina", tarif: "2", parties: 2 },
+      ],
+    });
+  });
+
   socket.on("nouvelle_partie_resultat", (resultat) => {
     log("Résultat : " + JSON.stringify(resultat));
     btn.disabled = false;
+    btn7.disabled = false;
   });
 </script>
 </body>
