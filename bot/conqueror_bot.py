@@ -145,7 +145,11 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
     enfants = lane_control.children()
 
-    # 1. Décoche toutes les cases à cocher de l'écran (piste + joueurs).
+    # 1. Décoche toutes les cases à cocher de l'écran (piste + joueurs), en
+    # gardant la liste de celles qu'on a touchées pour pouvoir les
+    # recocher si la suite échoue (sinon "Ajout parties" se retrouve sans
+    # aucune sélection et plante à son tour).
+    decochees = []
     for enfant in enfants:
         try:
             if enfant.friendly_class_name() != "CheckBox":
@@ -153,37 +157,50 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
             if enfant.get_toggle_state():
                 enfant.click_input()
                 time.sleep(0.05)
+                decochees.append(enfant)
         except Exception:
             continue
 
-    # 2. Repère le nom du joueur, prend la case 9 positions plus loin.
-    index_nom = None
-    for i, enfant in enumerate(enfants):
-        try:
-            if enfant.friendly_class_name() == "Text" and enfant.window_text() == nom_joueur:
-                index_nom = i
-                break
-        except Exception:
-            continue
+    try:
+        # 2. Repère le nom du joueur, prend la case N positions plus loin.
+        index_nom = None
+        for i, enfant in enumerate(enfants):
+            try:
+                if enfant.friendly_class_name() == "Text" and enfant.window_text() == nom_joueur:
+                    index_nom = i
+                    break
+            except Exception:
+                continue
 
-    if index_nom is None or index_nom + DECALAGE_CASE_SELECTION >= len(enfants):
-        raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
+        if index_nom is None or index_nom + DECALAGE_CASE_SELECTION >= len(enfants):
+            raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
 
-    case_joueur = enfants[index_nom + DECALAGE_CASE_SELECTION]
-    if case_joueur.friendly_class_name() != "CheckBox":
-        raise RuntimeError(
-            f"Élément inattendu à la position 'case sélectionnée' du joueur {nom_joueur!r} : "
-            f"{case_joueur.friendly_class_name()} (structure Conqueror probablement différente)"
-        )
+        case_joueur = enfants[index_nom + DECALAGE_CASE_SELECTION]
+        if case_joueur.friendly_class_name() != "CheckBox":
+            raise RuntimeError(
+                f"Élément inattendu à la position 'case sélectionnée' du joueur {nom_joueur!r} : "
+                f"{case_joueur.friendly_class_name()} (structure Conqueror probablement différente)"
+            )
 
-    case_joueur.click_input()
-    time.sleep(0.1)
+        case_joueur.click_input()
+        time.sleep(0.1)
 
-    # 3. "Tarifs" -> dialogue "Tarif par défaut..." -> "CE"
-    _cliquer(fenetre.child_window(auto_id="btnTarifs", control_type="Button"))
-    dialogue_tarif = fenetre.child_window(auto_id="DlgSelectPrice", control_type="Window")
-    _cliquer(dialogue_tarif.child_window(title="CE", control_type="Button"))
-    print(f"[bot] Tarif CE appliqué à {nom_joueur!r}.")
+        # 3. "Tarifs" -> dialogue "Tarif par défaut..." -> "CE"
+        _cliquer(fenetre.child_window(auto_id="btnTarifs", control_type="Button"))
+        dialogue_tarif = fenetre.child_window(auto_id="DlgSelectPrice", control_type="Window")
+        _cliquer(dialogue_tarif.child_window(title="CE", control_type="Button"))
+        print(f"[bot] Tarif CE appliqué à {nom_joueur!r}.")
+    except Exception:
+        # Restaure l'état initial (tout coché) pour ne pas casser la suite
+        # du parcours (ex: "Ajout parties").
+        for case in decochees:
+            try:
+                if not case.get_toggle_state():
+                    case.click_input()
+                    time.sleep(0.05)
+            except Exception:
+                pass
+        raise
 
 
 def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
