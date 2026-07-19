@@ -41,10 +41,9 @@
     log("Envoi commande nouvelle_partie...");
     socket.emit("nouvelle_partie", {
       nom: "Test",
-      nbParties: 1,
       joueurs: [
-        { nom: "Alice" },
-        { nom: "Bob", bumpers: true, passCE: true },
+        { nom: "Alice", tarif: "1" },
+        { nom: "Bob", bumpers: true, tarif: "CE" },
       ],
     });
   });

@@ -183,7 +183,11 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     dialogue_joueur = fenetre.child_window(
         title_re="Modifier les options du joueur.*", control_type="Window"
     )
-    dialogue_joueur.wait("visible enabled", timeout=10)
+    # Timeout resserré le 2026-07-19 (10s -> 3s) : c'est un plafond de
+    # sécurité, pas une pause fixe (.wait() rend la main dès que le dialogue
+    # est prêt) - le tour complet clic+écriture+OK doit rester sous 0.5s en
+    # fonctionnement normal.
+    dialogue_joueur.wait("visible enabled", timeout=3, retry_interval=0.02)
 
     champ_nom = dialogue_joueur.child_window(auto_id="Nom (ou ID membre)Entry", control_type="Edit")
     champ_nom.set_text(nom_joueur)
@@ -195,175 +199,147 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
 
     _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
 
-    # Attend la fermeture effective du dialogue (pas juste le clic) avant de
-    # continuer : signal minimal que Conqueror a traité l'enregistrement,
-    # utile en amont de _appliquer_tarif_ce qui doit ensuite retrouver le
-    # joueur par son nouveau nom sur LaneControl (cf. sa docstring - le
-    # rafraîchissement de ce nom peut prendre plusieurs secondes après la
-    # fermeture du dialogue, observé le 2026-07-19 sur 'Bob').
+    # Attend la fermeture effective du dialogue (pas juste le clic), pour
+    # être sûr que Conqueror a traité l'enregistrement avant l'étape
+    # suivante. Plafond resserré à 1s (0.01s d'intervalle) : le repérage
+    # positionnel utilisé ensuite (_appliquer_tarif_parties) ne dépend plus
+    # du nom affiché, donc plus besoin d'attendre un rafraîchissement -
+    # cette attente ne sert plus qu'à s'assurer que le dialogue est bien
+    # fermé avant d'interagir de nouveau avec LaneControl.
     try:
-        dialogue_joueur.wait_not("visible", timeout=2, retry_interval=0.02)
+        dialogue_joueur.wait_not("visible", timeout=1, retry_interval=0.01)
     except Exception as exc:
         print(f"[bot][debug] Dialogue joueur {nom_defaut!r} toujours visible après OK ? ({exc})")
 
     print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}.")
 
 
-def _appliquer_tarif_ce(fenetre, index_joueur, nom_defaut, nom_joueur):
+# Tarifs disponibles pour l'achat de parties par joueur, via
+# _appliquer_tarif_parties (titres exacts des boutons dans la fenêtre PDV,
+# relevés le 2026-07-19 via bot/scans/affichage_parties.txt). "1" (1 partie,
+# tarif normal) est la valeur par défaut si un joueur n'a pas de "tarif"
+# précisé dans la commande.
+TARIFS_PARTIES = {
+    "CE": "CE",
+    "1": "1 partie",
+    "2": "2 parties(2)",
+    "3": "3 parties(3)",
+    "2+1": "2+1(3)",
+}
+
+
+def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tarif):
     """
-    Applique le tarif "CE" (Pass CE) à un seul joueur, sur l'écran
-    LaneControl :
-      1. Décoche la case "sélectionné" de tous les joueurs de la piste.
-      2. Coche uniquement celle du joueur concerné.
-      3. Clique "Tarifs" -> dialogue "Tarif par défaut..." -> clique "CE".
+    Sélectionne le tarif + nombre de parties d'UN joueur, sur l'écran
+    LaneControl, en cliquant directement sur sa cellule "Parties" (colonne
+    du tableau des joueurs), ce qui ouvre une fenêtre PDV dédiée
+    ("PDV - Vente des parties à <nom>") où l'on choisit le tarif en un clic
+    parmi les boutons TARIFS_PARTIES (CE / 1 partie / 2 parties(2) /
+    3 parties(3) / 2+1(3)) puis on valide (OK / auto_id='btnPayment').
 
-    Historique (à conserver, deux tentatives précédentes invalidées par des
-    scans automatiques) :
-      - 2026-07-18 : repérage de la case par recherche du Text du joueur
-        (nom_joueur) + décalage fixe de 9 éléments.
-      - 2026-07-19 (1re correction) : recherche par nom_defaut OU nom_joueur
-        avec polling jusqu'à 1.5s, en supposant que Conqueror mettait du
-        temps à rafraîchir le nom affiché après renommage.
-      - 2026-07-19 (2e correction) : timeout remonté à 6s, même hypothèse.
-      - Les DEUX scans auto-générés lors des échecs suivants
-        (auto_echec_CE_Bob_20260719_133009.txt et _133440.txt) montrent que
-        'Bob' était bien affiché, avec le décalage +9 parfaitement correct,
-        au moment même de l'échec -> l'hypothèse du rafraîchissement lent
-        était fausse (confirmé aussi à l'oreille : Beer voit 'Bob' s'afficher
-        immédiatement). Le vrai problème : chercher un joueur PAR SON NOM sur
-        cet écran est intrinsèquement fragile (aucune garantie de ce que
-        pywinauto/UIA retourne exactement à quel instant), quelle que soit
-        la durée d'attente.
+    Remplace complètement DEUX méthodes précédentes, abandonnées le
+    2026-07-19 après échecs répétés malgré plusieurs corrections
+    (repérage par nom du joueur puis case à cocher + bouton "Tarifs" +
+    dialogue "Tarif par défaut", cf. historique git) : les scans
+    auto-générés lors des échecs montraient systématiquement une structure
+    correcte au moment du dump, ce qui pointait vers une fragilité propre
+    à la méthode (case à cocher + dialogue de tarif global) plutôt qu'à un
+    problème de timing. Cliquer directement sur "Parties" pour CE joueur,
+    suggéré par Beer, élimine en plus le besoin de l'étape globale
+    "Ajout parties" (qui appliquait un nombre de parties unique à tous les
+    joueurs sélectionnés à la fois) : chaque joueur choisit son propre
+    tarif/nombre de parties indépendamment, en un seul écran.
 
-    Fix actuel : repérage 100% POSITIONNEL, sans recherche de nom.
-    Confirmé sur tous les scans collectés (2, 7 joueurs, avant/après
-    renommage, décoché) : le 1er joueur commence TOUJOURS immédiatement
-    après le bouton "Enregistrer" (auto_id='btn', mais seul bouton avec ce
-    texte exact), et chaque joueur suivant occupe un bloc fixe de 10
-    éléments (nom + 8 éléments de statut + case "sélectionné" en dernière
-    position). L'ordre des joueurs sur cet écran est fixé à la création
-    (Nbre joueurs) et ne bouge jamais, contrairement au nom affiché. On
-    calcule donc directement : index_nom = index_enregistrer + 1 +
-    (index_joueur - 1) * 10, sans dépendre du texte actuellement affiché.
-    Le nom lu à cette position est loggé à titre indicatif seulement (pas
-    de comparaison bloquante), pour garder une trace en cas de nouvel échec.
+    Repérage de la cellule "Parties" : réutilise le repérage POSITIONNEL
+    validé pour l'ancienne fonction CE (le 1er joueur commence toujours
+    immédiatement après le bouton "Enregistrer", chaque joueur suivant
+    occupe un bloc fixe de 10 éléments) - voir bot/scans pour les scans de
+    référence. Dans ce bloc, l'ordre des colonnes (confirmé par les
+    en-têtes "Tarifs" / "Parties" / "Totaux" de LaneControl) donne : nom
+    +0, 3 cases +1/+2/+3, icône +4, colonne Tarifs +5, colonne PARTIES +6,
+    colonne Totaux +7/+8, case "sélectionné" +9. On clique donc sur
+    l'élément à l'index +6 du nom du joueur.
 
-    À revalider si Conqueror change cette disposition (cf. CDC 2.4).
+    ATTENTION : méthode déduite de bot/scans/affichage_parties.txt, pas
+    encore validée en conditions réelles depuis cet environnement (pas
+    d'accès direct à Conqueror) -> à tester en premier avec
+    CONFIRMATION_MANUELLE=true ou sur un seul joueur. À revalider si
+    Conqueror change cette disposition (cf. CDC 2.4).
     """
-    DECALAGE_CASE_SELECTION = 9
+    DECALAGE_PARTIES = 6
     TAILLE_BLOC_JOUEUR = 10
 
-    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
-    print(f"[bot][debug] --- Début application CE pour {nom_joueur!r} (joueur #{index_joueur}, défaut {nom_defaut!r}) ---")
+    titre_bouton = TARIFS_PARTIES.get(tarif)
+    if titre_bouton is None:
+        raise RuntimeError(
+            f"Tarif {tarif!r} inconnu pour {nom_joueur!r} (valeurs acceptées : {sorted(TARIFS_PARTIES)})"
+        )
 
-    # 1. Décoche toutes les cases à cocher de l'écran (piste + joueurs), en
-    # gardant la liste des INDEX touchés (pas les objets wrapper eux-mêmes :
-    # ils peuvent devenir invalides après les clics, cf. note ci-dessous) pour
-    # pouvoir les recocher si la suite échoue (sinon "Ajout parties" se
-    # retrouve sans aucune sélection et plante à son tour).
+    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    print(
+        f"[bot][debug] --- Parties pour {nom_joueur!r} (joueur #{index_joueur}, défaut {nom_defaut!r}) : "
+        f"tarif={tarif!r} -> bouton {titre_bouton!r} ---"
+    )
+
     enfants = lane_control.children()
-    print(f"[bot][debug] LaneControl.children() = {len(enfants)} élément(s) avant décochage.")
-    decochees_index = []
+
+    index_enregistrer = None
     for i, enfant in enumerate(enfants):
         try:
-            if enfant.friendly_class_name() != "CheckBox":
-                continue
-            if enfant.get_toggle_state():
-                enfant.click_input()
-                time.sleep(0.02)
-                decochees_index.append(i)
+            if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
+                index_enregistrer = i
+                break
         except Exception:
             continue
-    print(f"[bot][debug] {len(decochees_index)} case(s) décochée(s), indices {decochees_index}.")
+
+    if index_enregistrer is None:
+        print("[bot][debug] Bouton 'Enregistrer' introuvable sur LaneControl.")
+        _scan_diagnostic(fenetre, f"auto_echec_Parties_repere_{nom_joueur}")
+        raise RuntimeError("Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)")
+
+    index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
+    index_parties = index_nom + DECALAGE_PARTIES
+    print(f"[bot][debug] index_enregistrer={index_enregistrer} -> index_parties calculé={index_parties}.")
+
+    if index_parties >= len(enfants):
+        print(f"[bot][debug] Position calculée invalide (total {len(enfants)} élément(s)).")
+        _scan_diagnostic(fenetre, f"auto_echec_Parties_{nom_joueur}")
+        raise RuntimeError(f"Cellule 'Parties' du joueur {nom_joueur!r} introuvable (structure inattendue)")
+
+    cellule_parties = enfants[index_parties]
+    try:
+        texte_lu = cellule_parties.window_text()
+    except Exception:
+        texte_lu = "?"
+    print(f"[bot][debug] Cellule Parties à l'index {index_parties} : classe={cellule_parties.friendly_class_name()!r} texte={texte_lu!r}.")
+
+    cellule_parties.click_input()
+    time.sleep(0.05)
+
+    # Ouvre la fenêtre PDV dédiée ("PDV - Vente des parties à <nom>").
+    fenetre_pdv = fenetre.child_window(title_re=r"PDV - Vente des parties.*", control_type="Window")
+    try:
+        fenetre_pdv.wait("visible enabled", timeout=5, retry_interval=0.03)
+    except Exception:
+        print(f"[bot][debug] Fenêtre PDV non détectée pour {nom_joueur!r}.")
+        _scan_diagnostic(fenetre, f"auto_echec_Parties_fenetrepdv_{nom_joueur}")
+        raise RuntimeError(f"Fenêtre 'PDV - Vente des parties' non ouverte pour {nom_joueur!r}")
 
     try:
-        # 2. Repère le bloc du joueur PAR POSITION (pas par nom, cf.
-        # docstring) : re-scan frais des enfants (mêmes raisons que les
-        # versions précédentes - éléments potentiellement invalidés par le
-        # décochage), un seul passage suffit puisqu'on ne dépend plus d'un
-        # texte à rafraîchir.
-        enfants = lane_control.children()
+        grille_produits = fenetre_pdv.child_window(auto_id="gridProducts", control_type="Pane")
+        bouton_tarif = grille_produits.child_window(title=titre_bouton, control_type="Button")
+        _cliquer(bouton_tarif)
 
-        index_enregistrer = None
-        for i, enfant in enumerate(enfants):
-            try:
-                if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
-                    index_enregistrer = i
-                    break
-            except Exception:
-                continue
-
-        if index_enregistrer is None:
-            print("[bot][debug] Bouton 'Enregistrer' introuvable sur LaneControl.")
-            _scan_diagnostic(fenetre, f"auto_echec_CE_reperepositionnel_{nom_joueur}")
-            raise RuntimeError("Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)")
-
-        index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
-        print(f"[bot][debug] index_enregistrer={index_enregistrer} -> index_nom calculé={index_nom} (bloc #{index_joueur}).")
-
-        if index_nom >= len(enfants) or enfants[index_nom].friendly_class_name() != "Text":
-            print(f"[bot][debug] Position calculée invalide (total {len(enfants)} élément(s)).")
-            _scan_diagnostic(fenetre, f"auto_echec_CE_{nom_joueur}")
-            raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
+        _cliquer(fenetre_pdv.child_window(auto_id="btnPayment", control_type="Button"))
 
         try:
-            texte_lu = enfants[index_nom].window_text()
-        except Exception:
-            texte_lu = "?"
-        print(f"[bot][debug] Texte lu à la position calculée : {texte_lu!r} (attendu {nom_defaut!r} ou {nom_joueur!r}).")
-        if texte_lu not in (nom_defaut, nom_joueur):
-            print(
-                f"[bot][debug] ATTENTION : texte différent de l'attendu, mais on continue quand même "
-                f"(repérage positionnel, indépendant du nom affiché)."
-            )
+            fenetre_pdv.wait_not("visible", timeout=3, retry_interval=0.03)
+        except Exception as exc:
+            print(f"[bot][debug] Fenêtre PDV de {nom_joueur!r} toujours visible après OK ? ({exc})")
 
-        if index_nom + DECALAGE_CASE_SELECTION >= len(enfants):
-            _scan_diagnostic(fenetre, f"auto_echec_CE_{nom_joueur}")
-            raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
-
-        case_joueur = enfants[index_nom + DECALAGE_CASE_SELECTION]
-        print(
-            f"[bot][debug] Élément à index_nom+{DECALAGE_CASE_SELECTION}={index_nom + DECALAGE_CASE_SELECTION} : "
-            f"classe={case_joueur.friendly_class_name()!r}."
-        )
-        if case_joueur.friendly_class_name() != "CheckBox":
-            print(f"[bot][debug] Contexte autour de l'index attendu (±3) :")
-            for j in range(max(0, index_nom - 1), min(len(enfants), index_nom + DECALAGE_CASE_SELECTION + 4)):
-                try:
-                    print(f"[bot][debug]   [{j}] classe={enfants[j].friendly_class_name()!r} texte={enfants[j].window_text()!r}")
-                except Exception as exc:
-                    print(f"[bot][debug]   [{j}] (erreur lecture: {exc})")
-            _scan_diagnostic(fenetre, f"auto_echec_CE_structure_{nom_joueur}")
-            raise RuntimeError(
-                f"Élément inattendu à la position 'case sélectionnée' du joueur {nom_joueur!r} : "
-                f"{case_joueur.friendly_class_name()} (structure Conqueror probablement différente)"
-            )
-
-        case_joueur.click_input()
-        time.sleep(0.05)
-
-        # 3. "Tarifs" -> dialogue "Tarif par défaut..." -> "CE"
-        _cliquer(fenetre.child_window(auto_id="btnTarifs", control_type="Button"))
-        dialogue_tarif = fenetre.child_window(auto_id="DlgSelectPrice", control_type="Window")
-        _cliquer(dialogue_tarif.child_window(title="CE", control_type="Button"))
-        print(f"[bot] Tarif CE appliqué à {nom_joueur!r}.")
-    except Exception as exc:
-        print(f"[bot][debug] --- Échec CE pour {nom_joueur!r} : {exc} -> restauration des cases décochées ---")
-        # Restaure l'état initial (tout coché) pour ne pas casser la suite
-        # du parcours (ex: "Ajout parties"). Re-scan frais également, pour
-        # la même raison qu'au point 2 (ne pas réutiliser des références
-        # potentiellement invalidées).
-        enfants_restauration = lane_control.children()
-        for i in decochees_index:
-            try:
-                if i >= len(enfants_restauration):
-                    continue
-                case = enfants_restauration[i]
-                if case.friendly_class_name() == "CheckBox" and not case.get_toggle_state():
-                    case.click_input()
-                    time.sleep(0.02)
-            except Exception:
-                pass
+        print(f"[bot] Tarif {tarif!r} ({titre_bouton!r}) appliqué à {nom_joueur!r}.")
+    except Exception:
+        _scan_diagnostic(fenetre, f"auto_echec_Parties_bouton_{nom_joueur}")
         raise
 
 
@@ -379,15 +355,18 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
       2. Clic "Nbre joueurs" -> dialogue "dlg" -> clic sur le chiffre
          (validation directe, pas de bouton "OK" séparé) -> crée N
          placeholders "joueur1".."joueurN".
-      3. Pour chaque joueur (data["joueurs"]) : clic sur son placeholder
-         ("joueur1", "joueur2"...) -> dialogue "Modifier les options du
-         joueur..." -> nom (+ bumpers si fourni, via set_text(), PAS de
-         frappe clavier simulée) -> OK. Voir _configurer_joueur. Si le
-         joueur a "passCE": true, applique en plus le tarif CE (voir
-         _appliquer_tarif_ce : décoche tout, coche ce joueur, Tarifs, CE).
-      4. Clic "Ajout parties" -> dialogue "Nombre de parties" (même
-         comportement que "Nbre joueurs" : clic chiffre = validation
-         directe).
+      3. Pour chaque joueur (data["joueurs"]) :
+         a. Clic sur son placeholder ("joueur1", "joueur2"...) -> dialogue
+            "Modifier les options du joueur..." -> nom (+ bumpers si fourni,
+            via set_text(), PAS de frappe clavier simulée) -> OK. Voir
+            _configurer_joueur.
+         b. Clic sur sa cellule "Parties" (colonne du tableau LaneControl)
+            -> fenêtre PDV dédiée "Vente des parties à <nom>" -> clic sur
+            le bouton du tarif choisi (data["joueurs"][i]["tarif"], parmi
+            CE / 1 / 2 / 3 / 2+1 - "1" par défaut) -> OK. Voir
+            _appliquer_tarif_parties. Remplace l'ancienne étape globale
+            "Ajout parties" (retirée le 2026-07-19) : chaque joueur choisit
+            désormais son propre tarif/nombre de parties indépendamment.
 
     Note importante (2026-07-18) : Conqueror semble ignorer les frappes
     clavier synthétiques (send_keys/type_keys), même une fois la fenêtre
@@ -420,9 +399,8 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     nom = data.get("nom", "Test")
     joueurs = data.get("joueurs") or []
     nb_joueurs = str(len(joueurs) or data.get("nbJoueurs", 1))
-    nb_parties = str(data.get("nbParties", 1))
 
-    # --- Étape 1/4 : référence + "Sple Partie" ---
+    # --- Étape 1/3 : référence + "Sple Partie" ---
     champ_reference = fenetre.child_window(auto_id="RéférenceEntry", control_type="Edit")
     champ_reference.set_text(nom)
     print(f"[bot] Champ Référence rempli avec {nom!r}.")
@@ -434,7 +412,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
     if CONFIRMATION_MANUELLE:
         reponse = input(
-            f"[bot] Étape 1/4 : cliquer 'Sple Partie' avec la référence {nom!r}. Confirmer ? (o/N) : "
+            f"[bot] Étape 1/3 : cliquer 'Sple Partie' avec la référence {nom!r}. Confirmer ? (o/N) : "
         ).strip().lower()
         if reponse != "o":
             print("[bot] Annulé à l'étape 1 : aucun clic effectué.")
@@ -447,10 +425,10 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     # l'écran LaneControl (polling ~0,1s) avant de cliquer.
     bouton_nb_joueurs = fenetre.child_window(auto_id="btnNbre joueurs", control_type="Button")
 
-    # --- Étape 2/4 : "Nbre joueurs" -> dialogue "dlg" (validation directe) ---
+    # --- Étape 2/3 : "Nbre joueurs" -> dialogue "dlg" (validation directe) ---
     if CONFIRMATION_MANUELLE:
         reponse2 = input(
-            f"[bot] Étape 2/4 : cliquer 'Nbre joueurs' et sélectionner {nb_joueurs}. Confirmer ? (o/N) : "
+            f"[bot] Étape 2/3 : cliquer 'Nbre joueurs' et sélectionner {nb_joueurs}. Confirmer ? (o/N) : "
         ).strip().lower()
         if reponse2 != "o":
             print("[bot] Annulé à l'étape 2 : piste ouverte, joueurs non configurés.")
@@ -462,12 +440,13 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     _cliquer(dialogue_nb.child_window(title=nb_joueurs, control_type="Button"))
     print(f"[bot] {nb_joueurs} joueur(s) créé(s) (placeholders).")
 
-    # --- Étape 3/4 : configuration de chaque joueur (clic + set_text) ---
+    # --- Étape 3/3 : configuration de chaque joueur (clic + set_text) ---
     noms_appliques = []
+    tarifs_appliques = {}
     if joueurs:
         if CONFIRMATION_MANUELLE:
             reponse3 = input(
-                f"[bot] Étape 3/4 : configurer {len(joueurs)} joueur(s) "
+                f"[bot] Étape 3/3 : configurer {len(joueurs)} joueur(s) "
                 f"({', '.join(j.get('nom', '?') for j in joueurs)}). Confirmer ? (o/N) : "
             ).strip().lower()
             if reponse3 != "o":
@@ -479,6 +458,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             if not nom_joueur:
                 continue
             nom_defaut = f"joueur{index}"
+            tarif_joueur = info_joueur.get("tarif", "1")
             try:
                 _configurer_joueur(
                     fenetre,
@@ -488,36 +468,13 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                 )
                 noms_appliques.append(nom_joueur)
 
-                if info_joueur.get("passCE"):
-                    try:
-                        _appliquer_tarif_ce(fenetre, index, nom_defaut, nom_joueur)
-                    except Exception as exc:
-                        print(f"[bot] Échec application tarif CE pour {nom_joueur!r} : {exc}")
+                try:
+                    _appliquer_tarif_parties(fenetre, index, nom_defaut, nom_joueur, tarif_joueur)
+                    tarifs_appliques[nom_joueur] = tarif_joueur
+                except Exception as exc:
+                    print(f"[bot] Échec application tarif {tarif_joueur!r} pour {nom_joueur!r} : {exc}")
             except Exception as exc:
                 print(f"[bot] Échec configuration joueur {nom_joueur!r} : {exc}")
-
-    # --- Étape 4/4 : "Ajout parties" -> dialogue "Nombre de parties" ---
-    bouton_ajout_parties = fenetre.child_window(title="Ajout parties", control_type="Button")
-
-    if CONFIRMATION_MANUELLE:
-        reponse4 = input(
-            f"[bot] Étape 4/4 : cliquer 'Ajout parties' et sélectionner {nb_parties}. Confirmer ? (o/N) : "
-        ).strip().lower()
-        if reponse4 != "o":
-            print("[bot] Annulé à l'étape 4 : nombre de parties non configuré.")
-            return {
-                "succes": True,
-                "piste": data.get("piste"),
-                "nomJoueur": nom,
-                "joueurs": noms_appliques,
-                "etape": "arrete_avant_ajout_parties",
-            }
-
-    _cliquer(bouton_ajout_parties)
-
-    dialogue_parties = fenetre.child_window(auto_id="dlg", control_type="Window")
-    _cliquer(dialogue_parties.child_window(title=nb_parties, control_type="Button"))
-    print(f"[bot] {nb_parties} partie(s) configurée(s).")
 
     return {
         "succes": True,
@@ -525,7 +482,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
         "nomJoueur": nom,
         "joueurs": noms_appliques,
         "nbJoueurs": nb_joueurs,
-        "nbParties": nb_parties,
+        "tarifs": tarifs_appliques,
     }
 
 
