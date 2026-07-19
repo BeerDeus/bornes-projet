@@ -247,6 +247,52 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
         time.sleep(ATTENTE_STRUCTURE_INTERVALLE_S)
 
 
+def _cliquer_placeholder_joueur(fenetre, index_joueur, nom_defaut):
+    """
+    Clique sur le Text placeholder ("joueur1", "joueur2"...) d'un joueur.
+
+    Stratégie HYBRIDE (2026-07-19, suite au retour de Beer : "on ne peut
+    pas faire pareil pour le joueur 2 ?") - les deux méthodes précédentes
+    prises isolément échouaient chacune dans un cas différent :
+      - Recherche par TITRE (lane_control.child_window(title=nom_defaut,
+        ...)) : fiable et rapide pour le 1er joueur dans TOUS les tests
+        (jamais échoué), mais ambiguë pour le 2e joueur juste après la
+        vente du 1er ("There are 2 elements that match the criteria") ->
+        Conqueror expose transitoirement un doublon de conteneur.
+      - Repérage POSITIONNEL seul (_reperer_bloc_joueur) : insensible au
+        doublon, mais a échoué pour le 1er joueur lui-même dans deux tests
+        consécutifs (y compris avec polling jusqu'à 2s) sans qu'on sache
+        encore précisément pourquoi à cet instant précis - cause non
+        identifiée avec certitude.
+
+    Fix : on tente la recherche par TITRE en premier (le chemin qui a
+    toujours marché pour le 1er joueur), et on ne bascule sur le repérage
+    positionnel qu'en cas d'échec ou d'ambiguïté de cette recherche - donc
+    seulement dans le cas précis où on sait que ça peut arriver (joueurs
+    suivants, après une vente). Le meilleur des deux, plutôt qu'un choix
+    entre l'un ou l'autre.
+    """
+    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+
+    try:
+        candidat = lane_control.child_window(title=nom_defaut, control_type="Text")
+        candidat.wait("visible enabled", timeout=2, retry_interval=0.05)
+        candidat.click_input()
+        print(f"[bot][debug] {nom_defaut!r} : placeholder trouvé par titre.")
+        return
+    except Exception as exc:
+        print(f"[bot][debug] {nom_defaut!r} : recherche par titre échouée/ambiguë ({exc!r}) -> repli positionnel.")
+
+    try:
+        _, enfants, index_nom = _reperer_bloc_joueur(fenetre, index_joueur)
+    except Exception:
+        _scan_diagnostic(fenetre, f"auto_echec_placeholder_{nom_defaut}")
+        raise
+
+    enfants[index_nom].click_input()
+    print(f"[bot][debug] {nom_defaut!r} : placeholder trouvé par position (index {index_nom}).")
+
+
 # --------------------------------------------------------------------------
 def _configurer_joueur(fenetre, index_joueur, nom_defaut, nom_joueur, bumpers=False):
     """
@@ -263,14 +309,9 @@ def _configurer_joueur(fenetre, index_joueur, nom_defaut, nom_joueur, bumpers=Fa
     d'évènement clavier : il écrit la valeur directement via le fournisseur
     d'accessibilité de l'élément.
 
-    Bug 2026-07-19 (2e joueur, 'Bob') : "There are 2 elements that match the
-    criteria {'title': 'joueur2', ...}", persistant même en scopant la
-    recherche à LaneControl (donc pas un résidu d'une autre fenêtre comme
-    d'abord supposé) -> repérage par TITRE remplacé par le repérage
-    POSITIONNEL de _reperer_bloc_joueur (même méthode que
-    _appliquer_tarif_parties), qui ne fait plus aucune recherche par nom et
-    n'est donc plus vulnérable à un doublon transitoire de conteneur. Voir
-    la docstring de _reperer_bloc_joueur pour le détail.
+    Repérage du placeholder : voir _cliquer_placeholder_joueur (stratégie
+    hybride titre + repli positionnel, historique complet des deux bugs
+    rencontrés le 2026-07-19 dans sa docstring).
 
     Chronométré en debug (clic, ouverture dialogue, écriture, clic OK,
     fermeture) pour objectiver le ressenti de lenteur signalé par Beer -
@@ -279,11 +320,9 @@ def _configurer_joueur(fenetre, index_joueur, nom_defaut, nom_joueur, bumpers=Fa
     """
     t_debut = time.monotonic()
 
-    lane_control, enfants, index_nom = _reperer_bloc_joueur(fenetre, index_joueur)
-    element_nom = enfants[index_nom]
-    element_nom.click_input()
+    _cliquer_placeholder_joueur(fenetre, index_joueur, nom_defaut)
     time.sleep(0.03)
-    print(f"[bot][debug] {nom_defaut!r} : clic placeholder (position {index_nom}) -> +{time.monotonic() - t_debut:.2f}s")
+    print(f"[bot][debug] {nom_defaut!r} : clic placeholder -> +{time.monotonic() - t_debut:.2f}s")
 
     dialogue_joueur = fenetre.child_window(
         title_re="Modifier les options du joueur.*", control_type="Window"
