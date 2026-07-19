@@ -209,12 +209,19 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
     eu ce problème) ; la classe réellement observée est loggée à titre
     indicatif seulement.
     """
-    ATTENTE_STRUCTURE_MAX_S = 2.0
-    ATTENTE_STRUCTURE_INTERVALLE_S = 0.05
+    # Remonté de 2s -> 5s le 2026-07-19 : après la vente complète du 1er
+    # joueur, le repérage du 2e joueur a échoué même en repli positionnel,
+    # bouton "Enregistrer" introuvable après 5 tentatives / ~2s -> Conqueror
+    # semble avoir besoin de plus de temps pour finir de rafraîchir
+    # LaneControl juste après une transaction PDV réelle (vs. la simple
+    # création de placeholders, où 2s suffisait).
+    ATTENTE_STRUCTURE_MAX_S = 5.0
+    ATTENTE_STRUCTURE_INTERVALLE_S = 0.1
 
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
 
     derniere_erreur = None
+    boutons_vus = []
     debut = time.monotonic()
     tentatives = 0
     while True:
@@ -222,16 +229,22 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
         enfants = lane_control.children()
 
         index_enregistrer = None
+        boutons_vus = []
         for i, enfant in enumerate(enfants):
             try:
-                if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
-                    index_enregistrer = i
-                    break
+                if enfant.friendly_class_name() == "Button":
+                    boutons_vus.append(enfant.window_text())
+                    if enfant.window_text() == "Enregistrer":
+                        index_enregistrer = i
+                        break
             except Exception:
                 continue
 
         if index_enregistrer is None:
-            derniere_erreur = "Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)"
+            derniere_erreur = (
+                f"Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu) "
+                f"- {len(enfants)} élément(s) au total, boutons vus : {boutons_vus}"
+            )
         else:
             index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
             if index_nom < len(enfants):
@@ -253,6 +266,68 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
             raise RuntimeError(derniere_erreur)
 
         time.sleep(ATTENTE_STRUCTURE_INTERVALLE_S)
+
+
+def _elements_par_nom(lane_control, nom_recherche):
+    """
+    Retourne TOUS les éléments de LaneControl dont le texte == nom_recherche
+    (liste, jamais d'exception d'ambiguïté - contrairement à
+    lane_control.child_window(title=...), cf. bug 'joueur2' ambigu). Utilisé
+    par _trouver_cellule_ligne : si plusieurs éléments matchent (doublon
+    transitoire de conteneur), on prend juste le premier plutôt que de
+    planter, puisqu'ils représentent la même ligne logique.
+    """
+    resultats = []
+    for enfant in lane_control.children():
+        try:
+            if enfant.window_text() == nom_recherche:
+                resultats.append(enfant)
+        except Exception:
+            continue
+    return resultats
+
+
+def _trouver_cellule_ligne(lane_control, element_ligne, colonne_titre):
+    """
+    Trouve l'élément de LaneControl qui est sur la même LIGNE que
+    `element_ligne` (chevauchement vertical de rectangle écran) ET dans la
+    même COLONNE que l'en-tête `colonne_titre` (chevauchement horizontal).
+
+    Repérage GÉOMÉTRIQUE (coordonnées écran réelles via .rectangle()),
+    introduit le 2026-07-19 en remplacement du décalage fixe (bloc de 10
+    éléments) utilisé jusque-là. Raison : le scan auto-généré après la
+    vente d'un 1er joueur (auto_echec_placeholder_joueur2_20260719_141927.
+    txt) montre que Conqueror change la taille/le contenu du template
+    d'une ligne dès qu'une vente réelle a eu lieu sur la piste - le bouton
+    "Enregistrer" disparaît (remplacé par "Payer après"), des lignes de
+    détail supplémentaires apparaissent, et TOUS les index qui suivent se
+    retrouvent décalés de façon imprévisible. Un décalage fixe basé sur le
+    nombre d'éléments ne peut donc plus être fiable une fois qu'un premier
+    joueur a acheté des parties sur cette piste.
+
+    Les coordonnées écran, elles, restent alignées par colonne quel que
+    soit le template utilisé pour une ligne donnée - une cellule "Parties"
+    reste visuellement sous l'en-tête "Parties" et sur la même ligne que le
+    nom du joueur, même si le nombre d'éléments UIA de cette ligne a
+    changé. Approche non encore validée en conditions réelles (déduite du
+    scan, pas testable depuis cet environnement) -> à surveiller au premier
+    usage réel.
+    """
+    entete = lane_control.child_window(title=colonne_titre, control_type="Text")
+    rect_entete = entete.rectangle()
+    rect_ligne = element_ligne.rectangle()
+
+    for enfant in lane_control.children():
+        try:
+            r = enfant.rectangle()
+        except Exception:
+            continue
+        meme_ligne = r.top < rect_ligne.bottom and r.bottom > rect_ligne.top
+        meme_colonne = r.left < rect_entete.right and r.right > rect_entete.left
+        if meme_ligne and meme_colonne and enfant != element_ligne:
+            return enfant
+
+    raise RuntimeError(f"Cellule {colonne_titre!r} introuvable géométriquement (repère de ligne perdu)")
 
 
 def _cliquer_placeholder_joueur(fenetre, index_joueur, nom_defaut):
@@ -402,15 +477,21 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
     joueurs sélectionnés à la fois) : chaque joueur choisit son propre
     tarif/nombre de parties indépendamment, en un seul écran.
 
-    Repérage de la cellule "Parties" : réutilise le repérage POSITIONNEL
-    validé pour l'ancienne fonction CE (le 1er joueur commence toujours
-    immédiatement après le bouton "Enregistrer", chaque joueur suivant
-    occupe un bloc fixe de 10 éléments) - voir bot/scans pour les scans de
-    référence. Dans ce bloc, l'ordre des colonnes (confirmé par les
-    en-têtes "Tarifs" / "Parties" / "Totaux" de LaneControl) donne : nom
-    +0, 3 cases +1/+2/+3, icône +4, colonne Tarifs +5, colonne PARTIES +6,
-    colonne Totaux +7/+8, case "sélectionné" +9. On clique donc sur
-    l'élément à l'index +6 du nom du joueur.
+    Repérage de la cellule "Parties" : GÉOMÉTRIQUE (voir _trouver_cellule_
+    ligne), plus par décalage fixe. Le décalage fixe (bloc de 10 éléments
+    par joueur) a été invalidé le 2026-07-19 : le scan auto-généré après la
+    vente d'un 1er joueur montre que Conqueror change la taille/le contenu
+    du template d'une ligne dès qu'une vente réelle a eu lieu sur la piste
+    (bouton "Enregistrer" -> "Payer après", lignes de détail
+    supplémentaires...), ce qui décale tous les index suivants de façon
+    imprévisible - cassant le repérage par position pour le JOUEUR SUIVANT.
+
+    IMPORTANT : suppose que TOUS les joueurs ont déjà été renommés avec
+    leur nom FINAL (donc plus de placeholder ambigu type "joueur2") avant
+    le premier appel à cette fonction - voir ouvrir_nouvelle_partie_reelle,
+    qui fait deux passes séparées : tous les renommages d'abord (pendant
+    que la piste est encore "vierge", où le repérage positionnel de
+    _cliquer_placeholder_joueur reste fiable), puis tous les tarifs.
 
     ATTENTION : méthode déduite de bot/scans/affichage_parties.txt, pas
     encore validée en conditions réelles depuis cet environnement (pas
@@ -418,8 +499,6 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
     CONFIRMATION_MANUELLE=true ou sur un seul joueur. À revalider si
     Conqueror change cette disposition (cf. CDC 2.4).
     """
-    DECALAGE_PARTIES = 6
-
     titre_bouton = TARIFS_PARTIES.get(tarif)
     if titre_bouton is None:
         raise RuntimeError(
@@ -431,26 +510,27 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
         f"tarif={tarif!r} -> bouton {titre_bouton!r} ---"
     )
 
+    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+
     try:
-        lane_control, enfants, index_nom = _reperer_bloc_joueur(fenetre, index_joueur)
+        candidats = _elements_par_nom(lane_control, nom_joueur)
+        if not candidats:
+            raise RuntimeError(f"Nom {nom_joueur!r} introuvable sur LaneControl")
+        if len(candidats) > 1:
+            print(f"[bot][debug] {len(candidats)} élément(s) trouvé(s) pour {nom_joueur!r}, on prend le premier.")
+        element_ligne = candidats[0]
+
+        cellule_parties = _trouver_cellule_ligne(lane_control, element_ligne, "Parties")
     except Exception:
         _scan_diagnostic(fenetre, f"auto_echec_Parties_repere_{nom_joueur}")
         raise
 
-    index_parties = index_nom + DECALAGE_PARTIES
-    print(f"[bot][debug] index_nom={index_nom} -> index_parties calculé={index_parties}.")
-
-    if index_parties >= len(enfants):
-        print(f"[bot][debug] Position calculée invalide (total {len(enfants)} élément(s)).")
-        _scan_diagnostic(fenetre, f"auto_echec_Parties_{nom_joueur}")
-        raise RuntimeError(f"Cellule 'Parties' du joueur {nom_joueur!r} introuvable (structure inattendue)")
-
-    cellule_parties = enfants[index_parties]
     try:
         texte_lu = cellule_parties.window_text()
+        classe_lue = cellule_parties.friendly_class_name()
     except Exception:
-        texte_lu = "?"
-    print(f"[bot][debug] Cellule Parties à l'index {index_parties} : classe={cellule_parties.friendly_class_name()!r} texte={texte_lu!r}.")
+        texte_lu, classe_lue = "?", "?"
+    print(f"[bot][debug] Cellule Parties (géométrique) : classe={classe_lue!r} texte={texte_lu!r}.")
 
     cellule_parties.click_input()
     time.sleep(0.05)
@@ -614,9 +694,21 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     _cliquer(dialogue_nb.child_window(title=nb_joueurs, control_type="Button"))
     print(f"[bot] {nb_joueurs} joueur(s) créé(s) (placeholders).")
 
-    # --- Étape 3/3 : configuration de chaque joueur (clic + set_text) ---
+    # --- Étape 3/3 : configuration de chaque joueur, en DEUX PASSES ---
+    # Séparation introduite le 2026-07-19 : le repérage positionnel des
+    # placeholders (_cliquer_placeholder_joueur / _reperer_bloc_joueur)
+    # n'est fiable QUE tant qu'aucune vente réelle n'a eu lieu sur la
+    # piste (une vente change la taille/le contenu du template de ligne
+    # dans Conqueror, décalant tous les index suivants - cf. docstrings de
+    # _appliquer_tarif_parties et _trouver_cellule_ligne). On renomme donc
+    # TOUS les joueurs d'abord (piste encore "vierge", repérage
+    # positionnel fiable), puis on applique TOUS les tarifs ensuite
+    # (repérage géométrique par nom, qui lui ne dépend plus du nombre
+    # d'éléments).
     noms_appliques = []
     tarifs_appliques = {}
+    tarifs_a_appliquer = []  # [(index, nom_defaut, nom_joueur, tarif), ...]
+
     if joueurs:
         if CONFIRMATION_MANUELLE:
             reponse3 = input(
@@ -627,6 +719,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                 print("[bot] Annulé à l'étape 3 : joueurs laissés avec leur nom par défaut.")
                 joueurs = []
 
+        # --- Passe 1 : tous les renommages ---
         for index, info_joueur in enumerate(joueurs, start=1):
             nom_joueur = info_joueur.get("nom")
             if not nom_joueur:
@@ -642,14 +735,17 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
                     bumpers=info_joueur.get("bumpers", False),
                 )
                 noms_appliques.append(nom_joueur)
-
-                try:
-                    _appliquer_tarif_parties(fenetre, index, nom_defaut, nom_joueur, tarif_joueur)
-                    tarifs_appliques[nom_joueur] = tarif_joueur
-                except Exception as exc:
-                    print(f"[bot] Échec application tarif {tarif_joueur!r} pour {nom_joueur!r} : {exc}")
+                tarifs_a_appliquer.append((index, nom_defaut, nom_joueur, tarif_joueur))
             except Exception as exc:
                 print(f"[bot] Échec configuration joueur {nom_joueur!r} : {exc}")
+
+        # --- Passe 2 : tous les tarifs (uniquement les joueurs renommés avec succès) ---
+        for index, nom_defaut, nom_joueur, tarif_joueur in tarifs_a_appliquer:
+            try:
+                _appliquer_tarif_parties(fenetre, index, nom_defaut, nom_joueur, tarif_joueur)
+                tarifs_appliques[nom_joueur] = tarif_joueur
+            except Exception as exc:
+                print(f"[bot] Échec application tarif {tarif_joueur!r} pour {nom_joueur!r} : {exc}")
 
     return {
         "succes": True,
