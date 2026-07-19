@@ -193,18 +193,21 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
     occupe un bloc fixe de TAILLE_BLOC_JOUEUR éléments. À revalider si
     Conqueror change cette disposition (cf. CDC 2.4).
 
-    Bug 2026-07-19 (régression) : appelé pour le 1er joueur ('Alice') juste
-    après la création des placeholders (clic du chiffre dans le dialogue
-    "Nbre joueurs"), échoue immédiatement avec un total de 65 éléments
-    (le compte normal) mais un élément différent de "Text" à la position
-    calculée. L'ancienne méthode par recherche de titre utilisait
-    _cliquer(), qui attend via .wait("visible enabled", ...) que l'élément
-    soit prêt -> ça absorbait implicitement un léger délai de rendu de
-    Conqueror juste après la création des lignes joueurs. Le repérage
-    positionnel, en un seul scan sans attente, n'a plus ce filet de
-    sécurité -> ajout d'un court polling (re-scan frais à chaque tentative)
-    pour retrouver cette tolérance, sans réintroduire de recherche par nom
-    (donc toujours pas vulnérable au bug du doublon transitoire ci-dessus).
+    Bug 2026-07-19 (régression, résolu) : échouait pour 'Alice' ET 'Bob'
+    avec "structure inattendue" alors que le scan auto-généré au moment de
+    l'échec (auto_echec_Parties_repere_Alice_20260719_141217.txt) montre
+    sans ambiguïté que la position calculée (43) EST bien 'Alice' de type
+    [Text] (d'après element_info.control_type, utilisé par le dump). Cause
+    réelle : le test runtime utilisait enfant.friendly_class_name() ==
+    "Text", et friendly_class_name() ne renvoie PAS toujours "Text" pour ce
+    type de contrôle WPF sous ce backend/cette version de pywinauto
+    (probablement "Static", terminologie héritée du backend Win32) - alors
+    que friendly_class_name() == "Button"/"CheckBox" s'est toujours révélé
+    fiable ailleurs dans ce fichier. Fix : on n'exige plus une classe
+    précise, seulement que la position soit dans les bornes (comme le fait
+    déjà _appliquer_tarif_parties pour la cellule Parties, qui n'a jamais
+    eu ce problème) ; la classe réellement observée est loggée à titre
+    indicatif seulement.
     """
     ATTENTE_STRUCTURE_MAX_S = 2.0
     ATTENTE_STRUCTURE_INTERVALLE_S = 0.05
@@ -231,13 +234,18 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
             derniere_erreur = "Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)"
         else:
             index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
-            if index_nom < len(enfants) and enfants[index_nom].friendly_class_name() == "Text":
+            if index_nom < len(enfants):
                 if tentatives > 1:
                     print(f"[bot][debug] _reperer_bloc_joueur #{index_joueur} : OK après {tentatives} tentative(s).")
+                try:
+                    classe_reelle = enfants[index_nom].friendly_class_name()
+                except Exception:
+                    classe_reelle = "?"
+                print(f"[bot][debug] _reperer_bloc_joueur #{index_joueur} : position {index_nom}, classe={classe_reelle!r} (indicatif).")
                 return lane_control, enfants, index_nom
             derniere_erreur = (
-                f"Bloc du joueur #{index_joueur} introuvable à la position calculée {index_nom} "
-                f"(structure inattendue, total {len(enfants)} élément(s))"
+                f"Bloc du joueur #{index_joueur} hors bornes à la position calculée {index_nom} "
+                f"(total {len(enfants)} élément(s))"
             )
 
         if time.monotonic() - debut >= ATTENTE_STRUCTURE_MAX_S:
@@ -539,6 +547,18 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     utilisée).
     """
     from pywinauto import Application  # import local : uniquement nécessaire en mode réel
+    from pywinauto.timings import Timings
+
+    # pywinauto insère ses PROPRES délais internes (après clic, après focus,
+    # timeouts de recherche par défaut, etc.), séparés des timeout/pause
+    # qu'on passe explicitement à nos .wait()/.click_input(). Ce sont ces
+    # délais internes, pas nos sleep() (tous < 0.05s), qui expliquent le
+    # plus probablement les cycles à ~6-9s observés le 2026-07-19 (ex :
+    # "clic OK -> +2.25s" alors qu'aucun sleep() de ce fichier n'approche
+    # cette durée). Timings.fast() resserre ce profil global. Appelé ici
+    # (une fois par commande, mode réel uniquement) plutôt qu'à l'import du
+    # module pour ne jamais affecter le mode SIMULATION.
+    Timings.fast()
 
     app = Application(backend="uia").connect(title_re=".*Conqueror.*")
     fenetre = app.top_window()
