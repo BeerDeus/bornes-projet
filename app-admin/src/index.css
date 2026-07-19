@@ -1,0 +1,295 @@
+/* Style inspiré de l'admin WordPress (cf. demande Beer 2026-07-19) : sidebar
+   sombre à gauche avec modules en accordéon, contenu clair à droite, tableaux
+   "list-table" classiques. */
+
+:root {
+  --sidebar-bg: #1d2327;
+  --sidebar-bg-hover: #2c3338;
+  --sidebar-bg-active: #2271b1;
+  --sidebar-text: #f0f0f1;
+  --sidebar-text-muted: #a7aaad;
+  --content-bg: #f0f0f1;
+  --card-bg: #ffffff;
+  --border: #c3c4c7;
+  --text: #1d2327;
+  --text-muted: #646970;
+  --accent: #2271b1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--content-bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+}
+
+button, input, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+.mise-en-page {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* --- Sidebar --- */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  color: var(--sidebar-text);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-titre {
+  padding: 18px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid #2c3338;
+}
+
+.sidebar-titre small {
+  display: block;
+  font-weight: 400;
+  color: var(--sidebar-text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.sidebar-module {
+  border-bottom: 1px solid #2c3338;
+}
+
+.sidebar-module-bouton {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--sidebar-text);
+  padding: 12px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.sidebar-module-bouton:hover {
+  background: var(--sidebar-bg-hover);
+}
+.sidebar-module-bouton.actif {
+  background: var(--sidebar-bg-active);
+}
+
+.sidebar-chevron {
+  transition: transform 0.15s ease;
+  font-size: 10px;
+  color: var(--sidebar-text-muted);
+}
+.sidebar-chevron.ouvert {
+  transform: rotate(90deg);
+}
+
+.sidebar-sousmenu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: #16191c;
+}
+
+.sidebar-sousmenu a {
+  display: block;
+  padding: 9px 16px 9px 34px;
+  color: var(--sidebar-text-muted);
+  font-size: 13px;
+}
+.sidebar-sousmenu a:hover {
+  color: var(--sidebar-text);
+  background: var(--sidebar-bg-hover);
+  text-decoration: none;
+}
+.sidebar-sousmenu a.actif {
+  color: #fff;
+  font-weight: 600;
+}
+
+/* --- Contenu --- */
+.contenu {
+  flex: 1;
+  padding: 24px 32px;
+  min-width: 0;
+}
+
+.entete-page {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.entete-page h1 {
+  font-size: 22px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.fil-ariane {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.carte {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+/* --- Filtres liste --- */
+.barre-filtres {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.barre-filtres select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--text);
+}
+
+/* --- Table type wp-admin list-table --- */
+table.liste {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+}
+
+table.liste th {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #f6f7f7;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+table.liste td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f0f0f1;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+table.liste tbody tr:hover {
+  background: #f6f7f7;
+}
+
+table.liste tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.lien-numero {
+  font-weight: 600;
+}
+
+/* --- Badge statut --- */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* --- Pagination --- */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination button {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- Détail commande --- */
+.grille-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.champ-detail dt {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+.champ-detail dd {
+  margin: 0;
+  font-size: 14px;
+}
+
+.retour-lien {
+  display: inline-block;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.etat-vide, .etat-erreur, .etat-chargement {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+.etat-erreur {
+  color: #d63638;
+}
+
+.encart-placeholder {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: #fafafa;
+}
