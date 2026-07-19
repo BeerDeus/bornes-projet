@@ -70,9 +70,9 @@ def _forcer_premier_plan(fenetre) -> bool:
     return reussi
 
 
-def _cliquer(controle, timeout_attente_s: float = 5, pause_apres_s: float = 0.1):
+def _cliquer(controle, timeout_attente_s: float = 5, pause_apres_s: float = 0.03):
     """
-    Attend que le contrôle soit prêt (vérifié environ toutes les 0,1s) et
+    Attend que le contrôle soit prêt (vérifié environ toutes les 0,03s) et
     clique dès qu'il est détecté, au lieu d'une pause fixe avant le clic
     -> plus rapide quand Conqueror répond vite, toujours robuste quand il
     est plus lent. Petite pause après le clic pour laisser le temps de
@@ -81,8 +81,15 @@ def _cliquer(controle, timeout_attente_s: float = 5, pause_apres_s: float = 0.1)
     Note : invoke() (API d'accessibilité, sans clic souris réel) a été
     essayé mais semble ne rien déclencher sur les boutons WPF custom de
     Conqueror (pas d'erreur, mais aucun effet) -> retour à click_input().
+
+    Constantes resserrées le 2026-07-19 (0.1s -> 0.03s) pour accélérer le
+    parcours : le polling par .wait() ne bloque déjà que le temps
+    nécessaire, donc réduire son intervalle et la pause post-clic gagne du
+    temps sans rien retirer côté fiabilité (cf. CDC 2.4). Si des échecs
+    intermittents réapparaissent après ce changement, remonter d'abord
+    pause_apres_s avant de suspecter la structure Conqueror.
     """
-    controle.wait("visible enabled", timeout=timeout_attente_s, retry_interval=0.1)
+    controle.wait("visible enabled", timeout=timeout_attente_s, retry_interval=0.03)
     controle.click_input()
     time.sleep(pause_apres_s)
 
@@ -122,7 +129,7 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}.")
 
 
-def _appliquer_tarif_ce(fenetre, nom_joueur):
+def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
     """
     Applique le tarif "CE" (Pass CE) à un seul joueur, sur l'écran
     LaneControl :
@@ -132,15 +139,32 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
 
     Repérage de la case à cocher : les cases n'ont ni texte ni auto_id
     stable (identifiants techniques volatils, comme les boutons numériques
-    des dialogues 0-12). Sur la structure observée le 2026-07-18, chaque
-    joueur occupe un bloc de 9 éléments après son nom (3 cases, 3 textes de
-    statut/parties/totaux, 2 totaux, puis la case "sélectionné" en dernière
-    position, juste avant le nom du joueur suivant) -> on la retrouve par
-    position relative au Text du nom. Fragile si Conqueror change cette
-    disposition ; à revalider si ça ne fonctionne plus après une mise à
-    jour (cf. CDC 2.4).
+    des dialogues 0-12). Sur la structure observée le 2026-07-18 (confirmée
+    sur plusieurs scans à 2 et 7 joueurs), chaque joueur occupe un bloc de 9
+    éléments après son nom (3 cases, 3 textes de statut/parties/totaux, 2
+    totaux, puis la case "sélectionné" en dernière position, juste avant le
+    nom du joueur suivant) -> on la retrouve par position relative au Text
+    du nom. Fragile si Conqueror change cette disposition ; à revalider si
+    ça ne fonctionne plus après une mise à jour (cf. CDC 2.4).
+
+    Repérage DU JOUEUR (nom_defaut vs nom_joueur) : bug observé le
+    2026-07-19 -> pour 'Bob' (2e joueur, seul à avoir passCE dans le jeu de
+    test), échec "Case à cocher introuvable" juste après un renommage
+    'joueur2' -> 'Bob' réussi, alors que la structure +9 elle-même est
+    correcte (cf. ci-dessus). Cause : cette fonction est appelée
+    immédiatement après la fermeture du dialogue "Modifier les options du
+    joueur...", et Conqueror (WPF) ne rafraîchit pas toujours instantanément
+    le Text affiché sur LaneControl avec le nouveau nom -> une recherche
+    unique par nom_joueur ('Bob') juste après peut ne rien trouver si
+    l'écran affiche encore transitoirement 'joueur2'. 'Alice' (1er joueur,
+    sans CE) ne déclenchait jamais cette recherche, d'où un bug invisible
+    pour elle. Fix : on accepte nom_defaut OU nom_joueur, avec un court
+    polling (au lieu d'un scan unique) le temps que Conqueror rafraîchisse
+    l'affichage.
     """
     DECALAGE_CASE_SELECTION = 9
+    ATTENTE_NOM_MAX_S = 1.5
+    ATTENTE_NOM_INTERVALLE_S = 0.05
 
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
 
@@ -157,29 +181,36 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
                 continue
             if enfant.get_toggle_state():
                 enfant.click_input()
-                time.sleep(0.05)
+                time.sleep(0.02)
                 decochees_index.append(i)
         except Exception:
             continue
 
     try:
-        # 2. Repère le nom du joueur, prend la case N positions plus loin.
-        # Important : on re-scanne les enfants ICI plutôt que de réutiliser
-        # la liste récupérée avant le décochage. Conqueror (WPF) semble
-        # invalider/régénérer certains éléments après les clics précédents,
-        # ce qui fait échouer silencieusement la recherche par nom si on
-        # garde les anciennes références (cause probable de l'échec observé
-        # alors que le décalage +9 est structurellement correct).
-        enfants = lane_control.children()
-
+        # 2. Repère le nom du joueur (nom_defaut OU nom_joueur, cf.
+        # docstring), prend la case N positions plus loin. Important : on
+        # re-scanne les enfants À CHAQUE ITÉRATION plutôt que de réutiliser
+        # une liste unique. Conqueror (WPF) semble invalider/régénérer
+        # certains éléments après les clics précédents ET peut mettre un
+        # instant à rafraîchir le nom affiché après un renommage -> on
+        # attend jusqu'à ATTENTE_NOM_MAX_S en repointant à chaque passage.
         index_nom = None
-        for i, enfant in enumerate(enfants):
-            try:
-                if enfant.friendly_class_name() == "Text" and enfant.window_text() == nom_joueur:
-                    index_nom = i
-                    break
-            except Exception:
-                continue
+        enfants = []
+        debut = time.monotonic()
+        while index_nom is None and time.monotonic() - debut < ATTENTE_NOM_MAX_S:
+            enfants = lane_control.children()
+            for i, enfant in enumerate(enfants):
+                try:
+                    if enfant.friendly_class_name() != "Text":
+                        continue
+                    texte = enfant.window_text()
+                    if texte == nom_joueur or texte == nom_defaut:
+                        index_nom = i
+                        break
+                except Exception:
+                    continue
+            if index_nom is None:
+                time.sleep(ATTENTE_NOM_INTERVALLE_S)
 
         if index_nom is None or index_nom + DECALAGE_CASE_SELECTION >= len(enfants):
             raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
@@ -192,7 +223,7 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
             )
 
         case_joueur.click_input()
-        time.sleep(0.1)
+        time.sleep(0.05)
 
         # 3. "Tarifs" -> dialogue "Tarif par défaut..." -> "CE"
         _cliquer(fenetre.child_window(auto_id="btnTarifs", control_type="Button"))
@@ -212,7 +243,7 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
                 case = enfants_restauration[i]
                 if case.friendly_class_name() == "CheckBox" and not case.get_toggle_state():
                     case.click_input()
-                    time.sleep(0.05)
+                    time.sleep(0.02)
             except Exception:
                 pass
         raise
@@ -329,10 +360,11 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             nom_joueur = info_joueur.get("nom")
             if not nom_joueur:
                 continue
+            nom_defaut = f"joueur{index}"
             try:
                 _configurer_joueur(
                     fenetre,
-                    f"joueur{index}",
+                    nom_defaut,
                     nom_joueur,
                     bumpers=info_joueur.get("bumpers", False),
                 )
@@ -340,7 +372,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
 
                 if info_joueur.get("passCE"):
                     try:
-                        _appliquer_tarif_ce(fenetre, nom_joueur)
+                        _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur)
                     except Exception as exc:
                         print(f"[bot] Échec application tarif CE pour {nom_joueur!r} : {exc}")
             except Exception as exc:
