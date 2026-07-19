@@ -162,8 +162,64 @@ def _cliquer(controle, timeout_attente_s: float = 5, pause_apres_s: float = 0.03
     time.sleep(pause_apres_s)
 
 
+TAILLE_BLOC_JOUEUR = 10
+
+
+def _reperer_bloc_joueur(fenetre, index_joueur):
+    """
+    Retourne (lane_control, enfants, index_nom) : la liste FRAÎCHE des
+    enfants de LaneControl et l'index du Text nom du joueur #index_joueur
+    (1-based, ordre de création), repéré par POSITION plutôt que par
+    recherche de titre.
+
+    Historique : la recherche par titre (fenetre/lane_control.child_window
+    (title=nom_defaut, control_type="Text")) a échoué le 2026-07-19 pour le
+    2e joueur ('Bob') avec "There are 2 elements that match the criteria"
+    -> DEUX Text 'joueur2' existaient simultanément au moment de la
+    recherche, y compris en scopant déjà la recherche à LaneControl (donc
+    pas un résidu d'une autre fenêtre comme d'abord supposé). Hypothèse la
+    plus probable : Conqueror régénère les conteneurs de la liste de
+    joueurs (WPF ItemsControl) après une vente complète (transaction PDV du
+    1er joueur), ce qui peut exposer transitoirement l'ancien ET le nouveau
+    conteneur du 2e joueur à UIA, même sans qu'il ait lui-même été modifié.
+    Une recherche par titre est vulnérable à ce doublon transitoire ; un
+    index calculé sur un SEUL scan de enfants ne l'est pas (on prend
+    l'élément à une position, peu importe qu'il y en ait un autre ailleurs
+    dans la liste avec le même texte).
+
+    Repérage validé sur tous les scans collectés (2 et 7 joueurs, avant/
+    après renommage, décoché) : le 1er joueur commence toujours
+    immédiatement après le bouton "Enregistrer", chaque joueur suivant
+    occupe un bloc fixe de TAILLE_BLOC_JOUEUR éléments. À revalider si
+    Conqueror change cette disposition (cf. CDC 2.4).
+    """
+    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    enfants = lane_control.children()
+
+    index_enregistrer = None
+    for i, enfant in enumerate(enfants):
+        try:
+            if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
+                index_enregistrer = i
+                break
+        except Exception:
+            continue
+
+    if index_enregistrer is None:
+        raise RuntimeError("Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)")
+
+    index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
+    if index_nom >= len(enfants) or enfants[index_nom].friendly_class_name() != "Text":
+        raise RuntimeError(
+            f"Bloc du joueur #{index_joueur} introuvable à la position calculée {index_nom} "
+            f"(structure inattendue, total {len(enfants)} élément(s))"
+        )
+
+    return lane_control, enfants, index_nom
+
+
 # --------------------------------------------------------------------------
-def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
+def _configurer_joueur(fenetre, index_joueur, nom_defaut, nom_joueur, bumpers=False):
     """
     Renomme/configure un joueur existant (placeholder "joueurN" créé par le
     dialogue "Nbre joueurs") : clic sur son nom par défaut (souris, fiable)
@@ -179,13 +235,13 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     d'accessibilité de l'élément.
 
     Bug 2026-07-19 (2e joueur, 'Bob') : "There are 2 elements that match the
-    criteria {'title': 'joueur2', ...}" -> la recherche du placeholder se
-    faisait sur TOUTE la fenêtre (fenetre.child_window), qui peut encore
-    contenir des restes de la fenêtre PDV du joueur précédent (cf.
-    _appliquer_tarif_parties) au moment où le joueur suivant démarre. Fix :
-    on scope la recherche à LaneControl uniquement (un seul Text par
-    placeholder y est garanti, structure vérifiée sur tous les scans
-    collectés), ce qui élimine toute ambiguïté avec une autre fenêtre.
+    criteria {'title': 'joueur2', ...}", persistant même en scopant la
+    recherche à LaneControl (donc pas un résidu d'une autre fenêtre comme
+    d'abord supposé) -> repérage par TITRE remplacé par le repérage
+    POSITIONNEL de _reperer_bloc_joueur (même méthode que
+    _appliquer_tarif_parties), qui ne fait plus aucune recherche par nom et
+    n'est donc plus vulnérable à un doublon transitoire de conteneur. Voir
+    la docstring de _reperer_bloc_joueur pour le détail.
 
     Chronométré en debug (clic, ouverture dialogue, écriture, clic OK,
     fermeture) pour objectiver le ressenti de lenteur signalé par Beer -
@@ -194,9 +250,11 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     """
     t_debut = time.monotonic()
 
-    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
-    _cliquer(lane_control.child_window(title=nom_defaut, control_type="Text"))
-    print(f"[bot][debug] {nom_defaut!r} : clic placeholder -> +{time.monotonic() - t_debut:.2f}s")
+    lane_control, enfants, index_nom = _reperer_bloc_joueur(fenetre, index_joueur)
+    element_nom = enfants[index_nom]
+    element_nom.click_input()
+    time.sleep(0.03)
+    print(f"[bot][debug] {nom_defaut!r} : clic placeholder (position {index_nom}) -> +{time.monotonic() - t_debut:.2f}s")
 
     dialogue_joueur = fenetre.child_window(
         title_re="Modifier les options du joueur.*", control_type="Window"
@@ -285,7 +343,6 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
     Conqueror change cette disposition (cf. CDC 2.4).
     """
     DECALAGE_PARTIES = 6
-    TAILLE_BLOC_JOUEUR = 10
 
     titre_bouton = TARIFS_PARTIES.get(tarif)
     if titre_bouton is None:
@@ -293,31 +350,19 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
             f"Tarif {tarif!r} inconnu pour {nom_joueur!r} (valeurs acceptées : {sorted(TARIFS_PARTIES)})"
         )
 
-    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
     print(
         f"[bot][debug] --- Parties pour {nom_joueur!r} (joueur #{index_joueur}, défaut {nom_defaut!r}) : "
         f"tarif={tarif!r} -> bouton {titre_bouton!r} ---"
     )
 
-    enfants = lane_control.children()
-
-    index_enregistrer = None
-    for i, enfant in enumerate(enfants):
-        try:
-            if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
-                index_enregistrer = i
-                break
-        except Exception:
-            continue
-
-    if index_enregistrer is None:
-        print("[bot][debug] Bouton 'Enregistrer' introuvable sur LaneControl.")
+    try:
+        lane_control, enfants, index_nom = _reperer_bloc_joueur(fenetre, index_joueur)
+    except Exception:
         _scan_diagnostic(fenetre, f"auto_echec_Parties_repere_{nom_joueur}")
-        raise RuntimeError("Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)")
+        raise
 
-    index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
     index_parties = index_nom + DECALAGE_PARTIES
-    print(f"[bot][debug] index_enregistrer={index_enregistrer} -> index_parties calculé={index_parties}.")
+    print(f"[bot][debug] index_nom={index_nom} -> index_parties calculé={index_parties}.")
 
     if index_parties >= len(enfants):
         print(f"[bot][debug] Position calculée invalide (total {len(enfants)} élément(s)).")
@@ -503,6 +548,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             try:
                 _configurer_joueur(
                     fenetre,
+                    index,
                     nom_defaut,
                     nom_joueur,
                     bumpers=info_joueur.get("bumpers", False),
