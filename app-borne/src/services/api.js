@@ -27,4 +27,6 @@ export const api = {
   getCommande: (id) => requeteJson(`/commandes/${id}`),
   patchStatutCommande: (id, payload) =>
     requeteJson(`/commandes/${id}/statut`, { method: "PATCH", body: JSON.stringify(payload) }),
+  creerCommandeBowling: (payload) =>
+    requeteJson("/commandes-bowling", { method: "POST", body: JSON.stringify(payload) }),
 };

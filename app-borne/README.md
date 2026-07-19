@@ -1,4 +1,4 @@
-# App Borne (Phase 2) - Web, testable navigateur
+# App Borne (Phase 2 + Phase 4 Bowling) - Web, testable navigateur
 
 App React (Vite) qui deviendra l'app tablette une fois encapsulée avec
 Capacitor (pas d'accès à une tablette Android pour l'instant, cf. Roadmap).
@@ -22,9 +22,14 @@ ajuster `VITE_SERVEUR_URL`.
 - **Bar** (`/bar`) : catalogue (depuis la BDD, articles marqués "test" en
   attendant Trivec), panier persistant (localStorage), validation de
   commande -> POST `/api/commandes` -> Trivec (mock).
-- **Bowling** (`/bowling`) : reprend les scénarios de test-client/index.html
-  (nouvelle partie, 7 joueurs, paiement CE) pour continuer à tester le bot
-  Conqueror depuis cette app.
+- **Bowling** (`/bowling`) : parcours client complet - nb joueurs -> nb parties ->
+  prénoms+bumpers par joueur -> récap (encart code Pass CE, non validé pour l'instant +
+  case CGV) -> paiement (SIMULÉ, toujours un succès en attendant la Phase 3) -> exécution
+  du bot Conqueror -> récap final avec numéro de commande (BOxxx). Envoie vers
+  `POST /api/commandes-bowling`.
+- **Bowling - debug** (`/bowling-debug`, lien discret en bas de `/bowling`) : les anciens
+  scénarios de test bruts (nouvelle partie, 7 joueurs, paiement CE) pour tester le bot
+  Conqueror directement, sans passer par le wizard - utile pendant le dev du bot.
 
 ## Mode dégradé
 

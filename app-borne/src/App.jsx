@@ -4,6 +4,7 @@ import BanniereDegradee from "./components/BanniereDegradee";
 import Accueil from "./pages/Accueil";
 import Bar from "./pages/Bar";
 import Bowling from "./pages/Bowling";
+import BowlingDebug from "./pages/BowlingDebug";
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
         <Route path="/" element={<Accueil />} />
         <Route path="/bar" element={<Bar />} />
         <Route path="/bowling" element={<Bowling />} />
+        <Route path="/bowling-debug" element={<BowlingDebug />} />
       </Routes>
     </div>
   );
