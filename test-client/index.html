@@ -16,6 +16,7 @@
   <p id="botStatut">Bot : inconnu</p>
   <button id="btnNouvellePartie">Nouvelle Partie (2 joueurs)</button>
   <button id="btnTest7Joueurs">Test 7 joueurs (2 parties chacun, 2 en CE)</button>
+  <button id="btnTest1JoueurPaye">Test 1 joueur CE + Payer</button>
   <div id="log"></div>
 
 <script>
@@ -25,6 +26,7 @@
   const logEl = document.getElementById("log");
   const btn = document.getElementById("btnNouvellePartie");
   const btn7 = document.getElementById("btnTest7Joueurs");
+  const btn1Paye = document.getElementById("btnTest1JoueurPaye");
   const statutEl = document.getElementById("botStatut");
 
   function log(msg) {
@@ -34,6 +36,7 @@
   function envoyer(commande) {
     btn.disabled = true;
     btn7.disabled = true;
+    btn1Paye.disabled = true;
     log("Envoi commande nouvelle_partie...");
     socket.emit("nouvelle_partie", commande);
   }
@@ -73,10 +76,25 @@
     });
   });
 
+  // Scénario demandé le 2026-07-19 : 1 joueur, tarif CE (0€, sans risque
+  // caisse) + finalisation du paiement ("Payer" -> "Paye", cf.
+  // _payer_partie côté bot). payer:true déclenche cette étape (opt-in,
+  // action financière réelle - jamais déclenchée par défaut).
+  btn1Paye.addEventListener("click", () => {
+    envoyer({
+      nom: "TestPaye",
+      payer: true,
+      joueurs: [
+        { nom: "Alice", tarif: "CE" },
+      ],
+    });
+  });
+
   socket.on("nouvelle_partie_resultat", (resultat) => {
     log("Résultat : " + JSON.stringify(resultat));
     btn.disabled = false;
     btn7.disabled = false;
+    btn1Paye.disabled = false;
   });
 </script>
 </body>

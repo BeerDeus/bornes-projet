@@ -741,6 +741,61 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
         raise
 
 
+def _payer_partie(fenetre):
+    """
+    Finalise le paiement de la piste : clic "Payer" sur LaneControl ->
+    fenêtre "Paiement" (auto_id='Qbk.Economical.Pay', relevée le
+    2026-07-19 via bot/scans/ecran_apres_clic_payer.txt) -> clic "Paye"
+    (auto_id='btnPay').
+
+    Repérage du bouton "Payer" : comme "Sple Partie", il partage l'auto_id
+    générique 'btn' avec d'autres boutons de LaneControl (Piste, Enregistrer/
+    Payer après...) -> recherche par TITRE visible, pas par auto_id.
+
+    ATTENTION : pas de sélection de mode de paiement (QCash / Carte Bleu,
+    boutons de 'gridPaymentModes') avant le clic sur "Paye" - repose sur le
+    fait que le montant dû est 0€ (ex: tarif CE) dans le scénario de test
+    demandé par Beer le 2026-07-19. Comportement NON validé si un montant
+    est réellement dû (il faudra probablement cliquer un mode de paiement
+    avant "Paye" dans ce cas - à ajouter si besoin, cf. CDC 2.4).
+
+    Méthode déduite du scan, pas testable depuis cet environnement -> à
+    valider avec CONFIRMATION_MANUELLE=true en premier.
+    """
+    print("[bot][debug] --- Paiement : clic 'Payer' ---")
+    bouton_payer = fenetre.child_window(title="Payer", control_type="Button")
+    _cliquer(bouton_payer)
+
+    fenetre_paiement_spec = fenetre.child_window(title="Paiement", auto_id="Qbk.Economical.Pay", control_type="Window")
+    try:
+        fenetre_paiement = _attendre_pret(fenetre_paiement_spec, timeout_s=5, intervalle_s=0.01)
+    except Exception:
+        print("[bot][debug] Fenêtre 'Paiement' non détectée.")
+        _scan_diagnostic(fenetre, "auto_echec_Paiement_fenetre")
+        raise RuntimeError("Fenêtre 'Paiement' non ouverte après clic 'Payer'")
+
+    try:
+        titre_pdv = fenetre_paiement.window_text()
+    except Exception:
+        titre_pdv = "?"
+    print(f"[bot][debug] Fenêtre 'Paiement' ouverte : titre={titre_pdv!r}.")
+
+    try:
+        bouton_paye = _enfant(fenetre_paiement, control_type="Button", auto_id="btnPay")
+        _cliquer(bouton_paye)
+        print("[bot][debug] Clic 'Paye' effectué.")
+
+        if not _attendre_disparition(fenetre_paiement, timeout_s=5, intervalle_s=0.01):
+            print("[bot][debug] Fenêtre 'Paiement' encore visible après 'Paye'.")
+            _scan_diagnostic(fenetre, "auto_echec_Paiement_fermeture")
+            raise RuntimeError("Fenêtre 'Paiement' toujours visible après clic 'Paye'")
+
+        print("[bot] Paiement effectué ('Paye').")
+    except Exception:
+        _scan_diagnostic(fenetre, "auto_echec_Paiement_bouton")
+        raise
+
+
 def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
     """
     Pilote réellement Conqueror via pywinauto.
@@ -910,6 +965,29 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
             except Exception as exc:
                 print(f"[bot] Échec application tarif {tarif_joueur!r} pour {nom_joueur!r} : {exc}")
 
+    # --- Étape 4/4 (optionnelle) : "Payer" -> fenêtre "Paiement" -> "Paye" ---
+    # Action FINANCIÈRE réelle -> opt-in explicite (data["payer"] = true),
+    # pas déclenchée par défaut, pour ne jamais surprendre un appelant qui
+    # n'attend pas ce comportement. Ajoutée le 2026-07-19 à la demande de
+    # Beer, testée d'abord sur un tarif CE (0€, sans risque caisse) - voir
+    # _payer_partie (aucune sélection de mode de paiement, suppose 0€ dû).
+    paiement_effectue = False
+    if data.get("payer"):
+        if CONFIRMATION_MANUELLE:
+            reponse4 = input("[bot] Étape 4/4 : cliquer 'Payer' puis 'Paye'. Confirmer ? (o/N) : ").strip().lower()
+            if reponse4 != "o":
+                print("[bot] Annulé à l'étape 4 : paiement non effectué.")
+                reponse4 = None
+        else:
+            reponse4 = "o"
+
+        if reponse4 == "o":
+            try:
+                _payer_partie(fenetre)
+                paiement_effectue = True
+            except Exception as exc:
+                print(f"[bot] Échec du paiement : {exc}")
+
     return {
         "succes": True,
         "piste": data.get("piste"),
@@ -917,6 +995,7 @@ def ouvrir_nouvelle_partie_reelle(data: dict) -> dict:
         "joueurs": noms_appliques,
         "nbJoueurs": nb_joueurs,
         "tarifs": tarifs_appliques,
+        "paye": paiement_effectue,
     }
 
 
