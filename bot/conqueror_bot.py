@@ -138,27 +138,128 @@ def _forcer_premier_plan(fenetre) -> bool:
     return reussi
 
 
+def _attendre_pret(controle, timeout_s: float = 5, intervalle_s: float = 0.01):
+    """
+    Résout `controle` (WindowSpecification, lazy) UNE SEULE fois via
+    .wrapper_object(), puis boucle sur des vérifications d'état bon marché
+    (is_visible()/is_enabled() sur l'élément DÉJÀ résolu) au lieu de laisser
+    WindowSpecification.wait() relancer une recherche complète (child_window,
+    càd un aller-retour COM/UIA dans le process de Conqueror) à CHAQUE
+    itération du polling.
+
+    Ajouté le 2026-07-19 : les logs de chronométrage montraient des délais
+    remarquablement CONSTANTS d'un run à l'autre (ex: "clic OK -> +2.19s"
+    puis "+2.22s" sur la commande suivante, quasi identiques à la
+    centaine de ms près) malgré un retry_interval déjà court (0.02-0.03s)
+    -> signe probable d'un coût FIXE de recherche répétée plutôt que d'une
+    vraie attente variable côté Conqueror. Résoudre une seule fois et ne
+    relire que l'état de CET élément devrait réduire ce coût. Si les délais
+    ne bougent pas après ce changement, ça confirme que le temps vient bien
+    de Conqueror lui-même (traitement/validation interne), pas de nous - ce
+    sera alors la preuve qu'il n'y a plus rien à gratter côté bot.
+
+    Accepte aussi bien un WindowSpecification (lazy, cas normal - possède
+    .wrapper_object()) qu'un élément DÉJÀ résolu (BaseWrapper, ex. renvoyé
+    par _enfant() - ne possède pas .wrapper_object(), on l'utilise alors
+    tel quel).
+
+    Retourne l'élément résolu (à réutiliser directement pour le clic et,
+    le cas échéant, pour _attendre_disparition - éviter de re-résoudre).
+    """
+    debut = time.monotonic()
+    element = controle.wrapper_object() if hasattr(controle, "wrapper_object") else controle
+    while True:
+        try:
+            if element.is_visible() and element.is_enabled():
+                return element
+        except Exception:
+            pass
+        if time.monotonic() - debut >= timeout_s:
+            # Dernière tentative "officielle" pywinauto, pour lever la
+            # même exception standard que .wait() si toujours pas prêt
+            # (message d'erreur clair, pas juste un timeout muet) - possible
+            # uniquement si controle est un WindowSpecification.
+            if hasattr(controle, "wait"):
+                controle.wait("visible enabled", timeout=0.01)
+            else:
+                raise RuntimeError(f"Élément jamais prêt (visible+enabled) après {timeout_s}s : {element}")
+            return element
+        time.sleep(intervalle_s)
+
+
+def _attendre_disparition(element_deja_resolu, timeout_s: float = 2, intervalle_s: float = 0.01):
+    """
+    Attend qu'un élément DÉJÀ RÉSOLU (cf. _attendre_pret) ne soit plus
+    visible - une fenêtre/dialogue considérée comme invalide ou dont
+    is_visible() lève une exception est traitée comme "disparue" (élément
+    UIA détaché, cas normal après fermeture). Ne relance jamais de
+    recherche : c'est justement ce qu'on évite (cf. _attendre_pret).
+    """
+    debut = time.monotonic()
+    while True:
+        try:
+            if not element_deja_resolu.is_visible():
+                return True
+        except Exception:
+            return True
+        if time.monotonic() - debut >= timeout_s:
+            return False
+        time.sleep(intervalle_s)
+
+
+def _enfant(wrapper, control_type=None, title=None, auto_id=None):
+    """
+    Trouve UN descendant d'un élément DÉJÀ RÉSOLU (BaseWrapper, ex. renvoyé
+    par _attendre_pret), via wrapper.descendants() - une recherche UIA
+    native scopée à `wrapper` uniquement (pas de remontée jusqu'à la racine
+    de l'appli, contrairement à WindowSpecification.child_window(), qui
+    n'existe de toute façon pas sur un élément déjà résolu - AttributeError
+    garanti si on essaie).
+
+    auto_id n'est pas un filtre natif de descendants() (seuls process,
+    class_name, control_type, title le sont côté UIA) -> filtré côté
+    Python après coup si fourni.
+    """
+    kwargs = {}
+    if control_type is not None:
+        kwargs["control_type"] = control_type
+    if title is not None:
+        kwargs["title"] = title
+
+    candidats = wrapper.descendants(**kwargs)
+
+    if auto_id is not None:
+        filtres = []
+        for c in candidats:
+            try:
+                if c.element_info.automation_id == auto_id:
+                    filtres.append(c)
+            except Exception:
+                continue
+        candidats = filtres
+
+    if not candidats:
+        raise RuntimeError(
+            f"Élément introuvable sous {wrapper!r} (control_type={control_type!r}, "
+            f"title={title!r}, auto_id={auto_id!r})"
+        )
+    return candidats[0]
+
+
 def _cliquer(controle, timeout_attente_s: float = 5, pause_apres_s: float = 0.03):
     """
-    Attend que le contrôle soit prêt (vérifié environ toutes les 0,03s) et
-    clique dès qu'il est détecté, au lieu d'une pause fixe avant le clic
-    -> plus rapide quand Conqueror répond vite, toujours robuste quand il
-    est plus lent. Petite pause après le clic pour laisser le temps de
-    traiter l'action avant l'étape suivante.
+    Attend que le contrôle soit prêt (résolution unique, cf.
+    _attendre_pret) et clique dès qu'il est détecté, au lieu d'une pause
+    fixe avant le clic -> plus rapide quand Conqueror répond vite, toujours
+    robuste quand il est plus lent. Petite pause après le clic pour laisser
+    le temps de traiter l'action avant l'étape suivante.
 
     Note : invoke() (API d'accessibilité, sans clic souris réel) a été
     essayé mais semble ne rien déclencher sur les boutons WPF custom de
     Conqueror (pas d'erreur, mais aucun effet) -> retour à click_input().
-
-    Constantes resserrées le 2026-07-19 (0.1s -> 0.03s) pour accélérer le
-    parcours : le polling par .wait() ne bloque déjà que le temps
-    nécessaire, donc réduire son intervalle et la pause post-clic gagne du
-    temps sans rien retirer côté fiabilité (cf. CDC 2.4). Si des échecs
-    intermittents réapparaissent après ce changement, remonter d'abord
-    pause_apres_s avant de suspecter la structure Conqueror.
     """
-    controle.wait("visible enabled", timeout=timeout_attente_s, retry_interval=0.03)
-    controle.click_input()
+    element = _attendre_pret(controle, timeout_s=timeout_attente_s, intervalle_s=0.01)
+    element.click_input()
     time.sleep(pause_apres_s)
 
 
@@ -407,36 +508,40 @@ def _configurer_joueur(fenetre, index_joueur, nom_defaut, nom_joueur, bumpers=Fa
     time.sleep(0.03)
     print(f"[bot][debug] {nom_defaut!r} : clic placeholder -> +{time.monotonic() - t_debut:.2f}s")
 
-    dialogue_joueur = fenetre.child_window(
+    dialogue_joueur_spec = fenetre.child_window(
         title_re="Modifier les options du joueur.*", control_type="Window"
     )
     t_avant_dialogue = time.monotonic()
-    dialogue_joueur.wait("visible enabled", timeout=3, retry_interval=0.02)
+    # Résolution UNIQUE (cf. _attendre_pret) : dialogue_joueur est l'élément
+    # concret, réutilisé pour tous les enfants (champ nom, bumpers, OK) et
+    # pour la vérification de fermeture - plus aucune re-recherche de la
+    # fenêtre elle-même après ce point.
+    dialogue_joueur = _attendre_pret(dialogue_joueur_spec, timeout_s=3, intervalle_s=0.01)
     print(f"[bot][debug] {nom_defaut!r} : dialogue visible -> +{time.monotonic() - t_avant_dialogue:.2f}s")
 
-    champ_nom = dialogue_joueur.child_window(auto_id="Nom (ou ID membre)Entry", control_type="Edit")
+    champ_nom = _enfant(dialogue_joueur, control_type="Edit", auto_id="Nom (ou ID membre)Entry")
     t_avant_ecriture = time.monotonic()
     champ_nom.set_text(nom_joueur)
     print(f"[bot][debug] {nom_defaut!r} : set_text({nom_joueur!r}) -> +{time.monotonic() - t_avant_ecriture:.2f}s")
 
     if bumpers:
-        case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
+        case_bumpers = _enfant(dialogue_joueur, control_type="CheckBox", auto_id="BumpersCheckBox")
         if not case_bumpers.get_toggle_state():
             _cliquer(case_bumpers)
 
     t_avant_ok = time.monotonic()
-    _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
+    _cliquer(_enfant(dialogue_joueur, control_type="Button", auto_id="btnOK"))
     print(f"[bot][debug] {nom_defaut!r} : clic OK -> +{time.monotonic() - t_avant_ok:.2f}s")
 
     # Attend la fermeture effective du dialogue (pas juste le clic), pour
     # être sûr que Conqueror a traité l'enregistrement avant l'étape
-    # suivante.
+    # suivante. Réutilise l'élément déjà résolu (dialogue_joueur), pas de
+    # nouvelle recherche (cf. _attendre_disparition).
     t_avant_fermeture = time.monotonic()
-    try:
-        dialogue_joueur.wait_not("visible", timeout=2, retry_interval=0.02)
+    if _attendre_disparition(dialogue_joueur, timeout_s=2, intervalle_s=0.01):
         print(f"[bot][debug] {nom_defaut!r} : dialogue fermé -> +{time.monotonic() - t_avant_fermeture:.2f}s")
-    except Exception as exc:
-        print(f"[bot][debug] {nom_defaut!r} : dialogue TOUJOURS visible après OK ? ({exc})")
+    else:
+        print(f"[bot][debug] {nom_defaut!r} : dialogue TOUJOURS visible après OK ?")
 
     print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}. (cycle total : {time.monotonic() - t_debut:.2f}s)")
 
@@ -536,9 +641,12 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
     time.sleep(0.05)
 
     # Ouvre la fenêtre PDV dédiée ("PDV - Vente des parties à <nom>").
-    fenetre_pdv = fenetre.child_window(title_re=r"PDV - Vente des parties.*", control_type="Window")
+    fenetre_pdv_spec = fenetre.child_window(title_re=r"PDV - Vente des parties.*", control_type="Window")
     try:
-        fenetre_pdv.wait("visible enabled", timeout=5, retry_interval=0.03)
+        # Résolution UNIQUE (cf. _attendre_pret / _cliquer) : fenetre_pdv
+        # est réutilisée telle quelle pour tout le reste (recherche des
+        # boutons, vérification de fermeture), pas de re-recherche.
+        fenetre_pdv = _attendre_pret(fenetre_pdv_spec, timeout_s=5, intervalle_s=0.01)
     except Exception:
         print(f"[bot][debug] Fenêtre PDV non détectée pour {nom_joueur!r}.")
         _scan_diagnostic(fenetre, f"auto_echec_Parties_fenetrepdv_{nom_joueur}")
@@ -557,24 +665,23 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
         print(f"[bot][debug] ATTENTION : titre PDV ne mentionne ni {nom_joueur!r} ni {nom_defaut!r} !")
 
     try:
-        grille_produits = fenetre_pdv.child_window(auto_id="gridProducts", control_type="Pane")
-        bouton_tarif = grille_produits.child_window(title=titre_bouton, control_type="Button")
+        grille_produits = _enfant(fenetre_pdv, control_type="Pane", auto_id="gridProducts")
+        bouton_tarif = _enfant(grille_produits, control_type="Button", title=titre_bouton)
         _cliquer(bouton_tarif)
 
-        _cliquer(fenetre_pdv.child_window(auto_id="btnPayment", control_type="Button"))
+        _cliquer(_enfant(fenetre_pdv, control_type="Button", auto_id="btnPayment"))
 
-        # Vérifie la fermeture effective (plafond remonté à 4s + une
-        # 2e tentative de clic OK) : une fenêtre PDV encore ouverte au
-        # moment où le joueur suivant démarre peut fausser des recherches
-        # ailleurs dans l'appli (cf. bug 'joueur2' ambigu du 2026-07-19,
-        # cf. docstring de _configurer_joueur).
-        try:
-            fenetre_pdv.wait_not("visible", timeout=4, retry_interval=0.03)
-        except Exception:
+        # Vérifie la fermeture effective (plafond 4s + une 2e tentative de
+        # clic OK) : une fenêtre PDV encore ouverte au moment où le joueur
+        # suivant démarre peut fausser des recherches ailleurs dans
+        # l'appli (cf. bug 'joueur2' ambigu du 2026-07-19, cf. docstring de
+        # _configurer_joueur). Réutilise fenetre_pdv déjà résolue.
+        if not _attendre_disparition(fenetre_pdv, timeout_s=4, intervalle_s=0.01):
             print(f"[bot][debug] Fenêtre PDV de {nom_joueur!r} encore visible, nouvelle tentative de clic OK...")
             try:
-                _cliquer(fenetre_pdv.child_window(auto_id="btnPayment", control_type="Button"))
-                fenetre_pdv.wait_not("visible", timeout=3, retry_interval=0.03)
+                _cliquer(_enfant(fenetre_pdv, control_type="Button", auto_id="btnPayment"))
+                if not _attendre_disparition(fenetre_pdv, timeout_s=3, intervalle_s=0.01):
+                    raise RuntimeError("fenêtre PDV toujours visible après 2e tentative")
             except Exception as exc:
                 print(f"[bot][debug] ÉCHEC fermeture fenêtre PDV de {nom_joueur!r} : {exc}")
                 _scan_diagnostic(fenetre, f"auto_echec_Parties_fermeture_{nom_joueur}")
