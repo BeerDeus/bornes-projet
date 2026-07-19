@@ -40,6 +40,74 @@ HEARTBEAT_INTERVAL_S = 3
 
 sio = socketio.Client()
 
+DOSSIER_SCANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scans")
+
+
+# --------------------------------------------------------------------------
+# Diagnostic - scan automatique de l'écran au moment d'un échec
+# --------------------------------------------------------------------------
+def _dump_controle(controle, depth=0, lignes=None, max_profondeur=8, max_elements=800):
+    """
+    Réplique la logique de dump() de inspect_conqueror.py, réutilisable
+    depuis le bot lui-même : sert à générer un scan automatique de l'écran
+    au moment précis d'un échec, sans avoir à relancer inspect_conqueror.py
+    à la main après coup (l'état a pu avoir changé entre-temps, ex: retour à
+    un autre écran après l'erreur).
+    """
+    if lignes is None:
+        lignes = []
+    if len(lignes) >= max_elements or depth > max_profondeur:
+        return lignes
+    try:
+        texte = controle.window_text()
+    except Exception:
+        texte = ""
+    try:
+        control_type = controle.element_info.control_type
+    except Exception:
+        try:
+            control_type = controle.friendly_class_name()
+        except Exception:
+            control_type = "?"
+    try:
+        auto_id = controle.element_info.automation_id
+    except Exception:
+        auto_id = ""
+    lignes.append("  " * depth + f"- [{control_type}] texte={texte!r} auto_id={auto_id!r}")
+    try:
+        enfants = controle.children()
+    except Exception as exc:
+        lignes.append("  " * (depth + 1) + f"(erreur lecture des enfants: {exc})")
+        return lignes
+    for enfant in enfants:
+        if len(lignes) >= max_elements:
+            break
+        _dump_controle(enfant, depth + 1, lignes, max_profondeur, max_elements)
+    return lignes
+
+
+def _scan_diagnostic(controle, prefixe_nom_fichier: str) -> str:
+    """
+    Écrit un scan de `controle` (et ses enfants) dans bot/scans/, avec un nom
+    horodaté, façon inspect_conqueror.py - mais déclenché automatiquement par
+    le bot lui-même au moment exact d'un échec, ce qui est plus fiable qu'un
+    scan manuel après coup (l'écran a pu déjà changer, ex: message d'erreur
+    Conqueror affiché entre-temps). Best-effort : une erreur ici ne doit
+    jamais faire planter le bot / la commande en cours.
+    """
+    try:
+        os.makedirs(DOSSIER_SCANS, exist_ok=True)
+        horodatage = time.strftime("%Y%m%d_%H%M%S")
+        chemin = os.path.join(DOSSIER_SCANS, f"{prefixe_nom_fichier}_{horodatage}.txt")
+        lignes = _dump_controle(controle)
+        with open(chemin, "w", encoding="utf-8") as f:
+            f.write("\n".join(lignes))
+        print(f"[bot][debug] Scan diagnostic écrit ({len(lignes)} éléments) : {chemin}")
+        return chemin
+    except Exception as exc:
+        print(f"[bot][debug] Échec écriture scan diagnostic : {exc}")
+        return ""
+
 
 # --------------------------------------------------------------------------
 # Intégration Conqueror (pywinauto) - seulement chargée si mode réel
@@ -167,6 +235,7 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
     ATTENTE_NOM_INTERVALLE_S = 0.05
 
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    print(f"[bot][debug] --- Début application CE pour {nom_joueur!r} (défaut {nom_defaut!r}) ---")
 
     # 1. Décoche toutes les cases à cocher de l'écran (piste + joueurs), en
     # gardant la liste des INDEX touchés (pas les objets wrapper eux-mêmes :
@@ -174,6 +243,7 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
     # pouvoir les recocher si la suite échoue (sinon "Ajout parties" se
     # retrouve sans aucune sélection et plante à son tour).
     enfants = lane_control.children()
+    print(f"[bot][debug] LaneControl.children() = {len(enfants)} élément(s) avant décochage.")
     decochees_index = []
     for i, enfant in enumerate(enfants):
         try:
@@ -185,6 +255,7 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
                 decochees_index.append(i)
         except Exception:
             continue
+    print(f"[bot][debug] {len(decochees_index)} case(s) décochée(s), indices {decochees_index}.")
 
     try:
         # 2. Repère le nom du joueur (nom_defaut OU nom_joueur, cf.
@@ -196,14 +267,20 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
         # attend jusqu'à ATTENTE_NOM_MAX_S en repointant à chaque passage.
         index_nom = None
         enfants = []
+        textes_vus = []
         debut = time.monotonic()
+        tentatives = 0
         while index_nom is None and time.monotonic() - debut < ATTENTE_NOM_MAX_S:
+            tentatives += 1
             enfants = lane_control.children()
+            textes_vus = []
             for i, enfant in enumerate(enfants):
                 try:
                     if enfant.friendly_class_name() != "Text":
                         continue
                     texte = enfant.window_text()
+                    if texte.strip():
+                        textes_vus.append((i, texte))
                     if texte == nom_joueur or texte == nom_defaut:
                         index_nom = i
                         break
@@ -212,11 +289,31 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
             if index_nom is None:
                 time.sleep(ATTENTE_NOM_INTERVALLE_S)
 
+        duree = time.monotonic() - debut
+        print(
+            f"[bot][debug] Recherche du joueur : "
+            f"{'trouvé index=' + str(index_nom) if index_nom is not None else 'NON trouvé'} "
+            f"après {tentatives} tentative(s) ({duree:.2f}s)."
+        )
+
         if index_nom is None or index_nom + DECALAGE_CASE_SELECTION >= len(enfants):
+            print(f"[bot][debug] Textes non vides vus sur LaneControl à la dernière tentative : {textes_vus}")
+            _scan_diagnostic(fenetre, f"auto_echec_CE_{nom_joueur}")
             raise RuntimeError(f"Case à cocher du joueur {nom_joueur!r} introuvable (structure inattendue)")
 
         case_joueur = enfants[index_nom + DECALAGE_CASE_SELECTION]
+        print(
+            f"[bot][debug] Élément à index_nom+{DECALAGE_CASE_SELECTION}={index_nom + DECALAGE_CASE_SELECTION} : "
+            f"classe={case_joueur.friendly_class_name()!r}."
+        )
         if case_joueur.friendly_class_name() != "CheckBox":
+            print(f"[bot][debug] Contexte autour de l'index attendu (±3) :")
+            for j in range(max(0, index_nom - 1), min(len(enfants), index_nom + DECALAGE_CASE_SELECTION + 4)):
+                try:
+                    print(f"[bot][debug]   [{j}] classe={enfants[j].friendly_class_name()!r} texte={enfants[j].window_text()!r}")
+                except Exception as exc:
+                    print(f"[bot][debug]   [{j}] (erreur lecture: {exc})")
+            _scan_diagnostic(fenetre, f"auto_echec_CE_structure_{nom_joueur}")
             raise RuntimeError(
                 f"Élément inattendu à la position 'case sélectionnée' du joueur {nom_joueur!r} : "
                 f"{case_joueur.friendly_class_name()} (structure Conqueror probablement différente)"
@@ -230,7 +327,8 @@ def _appliquer_tarif_ce(fenetre, nom_defaut, nom_joueur):
         dialogue_tarif = fenetre.child_window(auto_id="DlgSelectPrice", control_type="Window")
         _cliquer(dialogue_tarif.child_window(title="CE", control_type="Button"))
         print(f"[bot] Tarif CE appliqué à {nom_joueur!r}.")
-    except Exception:
+    except Exception as exc:
+        print(f"[bot][debug] --- Échec CE pour {nom_joueur!r} : {exc} -> restauration des cases décochées ---")
         # Restaure l'état initial (tout coché) pour ne pas casser la suite
         # du parcours (ex: "Ajout parties"). Re-scan frais également, pour
         # la même raison qu'au point 2 (ne pas réutiliser des références
