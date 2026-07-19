@@ -192,30 +192,59 @@ def _reperer_bloc_joueur(fenetre, index_joueur):
     immédiatement après le bouton "Enregistrer", chaque joueur suivant
     occupe un bloc fixe de TAILLE_BLOC_JOUEUR éléments. À revalider si
     Conqueror change cette disposition (cf. CDC 2.4).
+
+    Bug 2026-07-19 (régression) : appelé pour le 1er joueur ('Alice') juste
+    après la création des placeholders (clic du chiffre dans le dialogue
+    "Nbre joueurs"), échoue immédiatement avec un total de 65 éléments
+    (le compte normal) mais un élément différent de "Text" à la position
+    calculée. L'ancienne méthode par recherche de titre utilisait
+    _cliquer(), qui attend via .wait("visible enabled", ...) que l'élément
+    soit prêt -> ça absorbait implicitement un léger délai de rendu de
+    Conqueror juste après la création des lignes joueurs. Le repérage
+    positionnel, en un seul scan sans attente, n'a plus ce filet de
+    sécurité -> ajout d'un court polling (re-scan frais à chaque tentative)
+    pour retrouver cette tolérance, sans réintroduire de recherche par nom
+    (donc toujours pas vulnérable au bug du doublon transitoire ci-dessus).
     """
+    ATTENTE_STRUCTURE_MAX_S = 2.0
+    ATTENTE_STRUCTURE_INTERVALLE_S = 0.05
+
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
-    enfants = lane_control.children()
 
-    index_enregistrer = None
-    for i, enfant in enumerate(enfants):
-        try:
-            if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
-                index_enregistrer = i
-                break
-        except Exception:
-            continue
+    derniere_erreur = None
+    debut = time.monotonic()
+    tentatives = 0
+    while True:
+        tentatives += 1
+        enfants = lane_control.children()
 
-    if index_enregistrer is None:
-        raise RuntimeError("Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)")
+        index_enregistrer = None
+        for i, enfant in enumerate(enfants):
+            try:
+                if enfant.friendly_class_name() == "Button" and enfant.window_text() == "Enregistrer":
+                    index_enregistrer = i
+                    break
+            except Exception:
+                continue
 
-    index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
-    if index_nom >= len(enfants) or enfants[index_nom].friendly_class_name() != "Text":
-        raise RuntimeError(
-            f"Bloc du joueur #{index_joueur} introuvable à la position calculée {index_nom} "
-            f"(structure inattendue, total {len(enfants)} élément(s))"
-        )
+        if index_enregistrer is None:
+            derniere_erreur = "Bouton 'Enregistrer' introuvable sur LaneControl (repère de position perdu)"
+        else:
+            index_nom = index_enregistrer + 1 + (index_joueur - 1) * TAILLE_BLOC_JOUEUR
+            if index_nom < len(enfants) and enfants[index_nom].friendly_class_name() == "Text":
+                if tentatives > 1:
+                    print(f"[bot][debug] _reperer_bloc_joueur #{index_joueur} : OK après {tentatives} tentative(s).")
+                return lane_control, enfants, index_nom
+            derniere_erreur = (
+                f"Bloc du joueur #{index_joueur} introuvable à la position calculée {index_nom} "
+                f"(structure inattendue, total {len(enfants)} élément(s))"
+            )
 
-    return lane_control, enfants, index_nom
+        if time.monotonic() - debut >= ATTENTE_STRUCTURE_MAX_S:
+            print(f"[bot][debug] _reperer_bloc_joueur #{index_joueur} : échec après {tentatives} tentative(s).")
+            raise RuntimeError(derniere_erreur)
+
+        time.sleep(ATTENTE_STRUCTURE_INTERVALLE_S)
 
 
 # --------------------------------------------------------------------------
