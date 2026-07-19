@@ -519,18 +519,41 @@ def _configurer_joueur(fenetre, index_joueur, nom_defaut, nom_joueur, bumpers=Fa
     dialogue_joueur = _attendre_pret(dialogue_joueur_spec, timeout_s=3, intervalle_s=0.01)
     print(f"[bot][debug] {nom_defaut!r} : dialogue visible -> +{time.monotonic() - t_avant_dialogue:.2f}s")
 
-    champ_nom = _enfant(dialogue_joueur, control_type="Edit", auto_id="Nom (ou ID membre)Entry")
+    # Résout TOUT ce dont on aura besoin dans ce dialogue EN UNE SEULE
+    # recherche UIA (un .descendants() sans filtre, puis filtrage côté
+    # Python), et AVANT même de taper le nom - au lieu de rechercher le
+    # bouton OK séparément juste avant de cliquer dessus. Le bouton OK
+    # existe déjà dès l'ouverture du dialogue (même s'il n'est pas encore
+    # cliquable) : le repérer maintenant sort le coût de cette recherche du
+    # temps mesuré comme "clic OK", qui ne contient plus alors que
+    # l'attente de son passage à l'état prêt (cf. _attendre_pret) + le clic
+    # lui-même.
+    t_avant_resolution = time.monotonic()
+    tous_controles = dialogue_joueur.descendants()
+
+    def _depuis_liste(control_type, auto_id):
+        for c in tous_controles:
+            try:
+                if c.element_info.control_type == control_type and c.element_info.automation_id == auto_id:
+                    return c
+            except Exception:
+                continue
+        raise RuntimeError(f"Élément introuvable dans le dialogue joueur (control_type={control_type!r}, auto_id={auto_id!r})")
+
+    champ_nom = _depuis_liste("Edit", "Nom (ou ID membre)Entry")
+    bouton_ok = _depuis_liste("Button", "btnOK")
+    case_bumpers = _depuis_liste("CheckBox", "BumpersCheckBox") if bumpers else None
+    print(f"[bot][debug] {nom_defaut!r} : contrôles du dialogue résolus -> +{time.monotonic() - t_avant_resolution:.2f}s")
+
     t_avant_ecriture = time.monotonic()
     champ_nom.set_text(nom_joueur)
     print(f"[bot][debug] {nom_defaut!r} : set_text({nom_joueur!r}) -> +{time.monotonic() - t_avant_ecriture:.2f}s")
 
-    if bumpers:
-        case_bumpers = _enfant(dialogue_joueur, control_type="CheckBox", auto_id="BumpersCheckBox")
-        if not case_bumpers.get_toggle_state():
-            _cliquer(case_bumpers)
+    if bumpers and not case_bumpers.get_toggle_state():
+        _cliquer(case_bumpers)
 
     t_avant_ok = time.monotonic()
-    _cliquer(_enfant(dialogue_joueur, control_type="Button", auto_id="btnOK"))
+    _cliquer(bouton_ok)
     print(f"[bot][debug] {nom_defaut!r} : clic OK -> +{time.monotonic() - t_avant_ok:.2f}s")
 
     # Attend la fermeture effective du dialogue (pas juste le clic), pour
