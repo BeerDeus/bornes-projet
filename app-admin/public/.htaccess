@@ -1,0 +1,19 @@
+# Fallback SPA (React Router) - Hostinger tourne sous Apache : sans ça, une
+# requête directe (F5, lien partagé, saisie manuelle) sur une route interne
+# comme /bowling/commandes renvoie un 404 (aucun fichier réel à ce chemin,
+# seul index.html existe à la racine du build). Toute requête qui ne
+# correspond pas à un fichier/dossier réel est réécrite vers index.html,
+# qui charge React Router - lui seul sait ensuite quoi afficher.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Laisse passer index.html tel quel (évite une boucle de réécriture).
+  RewriteRule ^index\.html$ - [L]
+
+  # Ne réécrit QUE si ce n'est ni un fichier ni un dossier existant (assets
+  # JS/CSS/images du build continuent d'être servis normalement).
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>

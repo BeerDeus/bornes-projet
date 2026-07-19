@@ -70,7 +70,12 @@ export default function CommandesListe() {
         {donnees && <span style={{ color: "var(--text-muted)", fontSize: 13 }}>{donnees.total} commande(s)</span>}
       </div>
 
-      {chargement && <div className="etat-chargement">Chargement…</div>}
+      {chargement && (
+        <div className="etat-chargement">
+          <span className="spinner" />
+          Chargement…
+        </div>
+      )}
       {erreur && <div className="etat-erreur">Erreur de chargement : {erreur.message}</div>}
 
       {!chargement && !erreur && donnees && donnees.commandes.length === 0 && (

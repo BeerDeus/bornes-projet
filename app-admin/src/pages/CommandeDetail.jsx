@@ -47,7 +47,12 @@ export default function CommandeDetail() {
         <h1>Commande {commande?.numero || (chargement ? "…" : id.slice(0, 8))}</h1>
       </div>
 
-      {chargement && <div className="etat-chargement">Chargement…</div>}
+      {chargement && (
+        <div className="etat-chargement">
+          <span className="spinner" />
+          Chargement…
+        </div>
+      )}
       {erreur && (
         <div className="etat-erreur">
           {erreur.statut === 404 ? "Commande introuvable." : `Erreur de chargement : ${erreur.message}`}

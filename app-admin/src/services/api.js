@@ -28,4 +28,16 @@ export const api = {
     return requeteJson(`/admin/commandes${suffixe}`);
   },
   getCommande: (id) => requeteJson(`/admin/commandes/${id}`),
+  getStatut: () => requeteJson("/admin/statut"),
+
+  // Paramètres Bowling - tarification par plage horaire (cf.
+  // backend/src/routes/adminTarifsBowling.js). Pas encore branché sur le
+  // calcul réel d'un prix de commande (cf. commentaire dans ce routeur) -
+  // uniquement de la configuration pour l'instant.
+  getTarifsBowling: () => requeteJson("/admin/bowling/tarifs"),
+  creerTarifBowling: (payload) =>
+    requeteJson("/admin/bowling/tarifs", { method: "POST", body: JSON.stringify(payload) }),
+  modifierTarifBowling: (id, payload) =>
+    requeteJson(`/admin/bowling/tarifs/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  supprimerTarifBowling: (id) => requeteJson(`/admin/bowling/tarifs/${id}`, { method: "DELETE" }),
 };

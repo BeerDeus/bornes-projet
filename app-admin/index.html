@@ -4,6 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Back-Office — Bornes Bowling</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Applique le thème AVANT le premier rendu (localStorage lu de façon
+      // synchrone ici) - sans ça on voit un flash clair puis un bascule vers
+      // sombre au montage de React (FOUC). Clé partagée avec
+      // src/hooks/useTheme.js (STORAGE_KEY) - à garder synchronisée si l'un
+      // des deux change.
+      (function () {
+        try {
+          var enregistre = localStorage.getItem("admin-theme");
+          var theme =
+            enregistre === "clair" || enregistre === "sombre"
+              ? enregistre
+              : window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "sombre"
+                : "clair";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (_e) {
+          /* localStorage indisponible (navigation privée stricte...) - thème clair par défaut via CSS */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
