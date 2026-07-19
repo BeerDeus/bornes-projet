@@ -177,41 +177,59 @@ def _configurer_joueur(fenetre, nom_defaut, nom_joueur, bumpers=False):
     en mode clavier. set_text() contourne le problème car il ne simule pas
     d'évènement clavier : il écrit la valeur directement via le fournisseur
     d'accessibilité de l'élément.
+
+    Bug 2026-07-19 (2e joueur, 'Bob') : "There are 2 elements that match the
+    criteria {'title': 'joueur2', ...}" -> la recherche du placeholder se
+    faisait sur TOUTE la fenêtre (fenetre.child_window), qui peut encore
+    contenir des restes de la fenêtre PDV du joueur précédent (cf.
+    _appliquer_tarif_parties) au moment où le joueur suivant démarre. Fix :
+    on scope la recherche à LaneControl uniquement (un seul Text par
+    placeholder y est garanti, structure vérifiée sur tous les scans
+    collectés), ce qui élimine toute ambiguïté avec une autre fenêtre.
+
+    Chronométré en debug (clic, ouverture dialogue, écriture, clic OK,
+    fermeture) pour objectiver le ressenti de lenteur signalé par Beer -
+    permet de voir si le temps vient de nos attentes (contrôlables) ou du
+    traitement propre à Conqueror (pas contrôlable depuis l'extérieur).
     """
-    _cliquer(fenetre.child_window(title=nom_defaut, control_type="Text"))
+    t_debut = time.monotonic()
+
+    lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
+    _cliquer(lane_control.child_window(title=nom_defaut, control_type="Text"))
+    print(f"[bot][debug] {nom_defaut!r} : clic placeholder -> +{time.monotonic() - t_debut:.2f}s")
 
     dialogue_joueur = fenetre.child_window(
         title_re="Modifier les options du joueur.*", control_type="Window"
     )
-    # Timeout resserré le 2026-07-19 (10s -> 3s) : c'est un plafond de
-    # sécurité, pas une pause fixe (.wait() rend la main dès que le dialogue
-    # est prêt) - le tour complet clic+écriture+OK doit rester sous 0.5s en
-    # fonctionnement normal.
+    t_avant_dialogue = time.monotonic()
     dialogue_joueur.wait("visible enabled", timeout=3, retry_interval=0.02)
+    print(f"[bot][debug] {nom_defaut!r} : dialogue visible -> +{time.monotonic() - t_avant_dialogue:.2f}s")
 
     champ_nom = dialogue_joueur.child_window(auto_id="Nom (ou ID membre)Entry", control_type="Edit")
+    t_avant_ecriture = time.monotonic()
     champ_nom.set_text(nom_joueur)
+    print(f"[bot][debug] {nom_defaut!r} : set_text({nom_joueur!r}) -> +{time.monotonic() - t_avant_ecriture:.2f}s")
 
     if bumpers:
         case_bumpers = dialogue_joueur.child_window(auto_id="BumpersCheckBox", control_type="CheckBox")
         if not case_bumpers.get_toggle_state():
             _cliquer(case_bumpers)
 
+    t_avant_ok = time.monotonic()
     _cliquer(dialogue_joueur.child_window(auto_id="btnOK", control_type="Button"))
+    print(f"[bot][debug] {nom_defaut!r} : clic OK -> +{time.monotonic() - t_avant_ok:.2f}s")
 
     # Attend la fermeture effective du dialogue (pas juste le clic), pour
     # être sûr que Conqueror a traité l'enregistrement avant l'étape
-    # suivante. Plafond resserré à 1s (0.01s d'intervalle) : le repérage
-    # positionnel utilisé ensuite (_appliquer_tarif_parties) ne dépend plus
-    # du nom affiché, donc plus besoin d'attendre un rafraîchissement -
-    # cette attente ne sert plus qu'à s'assurer que le dialogue est bien
-    # fermé avant d'interagir de nouveau avec LaneControl.
+    # suivante.
+    t_avant_fermeture = time.monotonic()
     try:
-        dialogue_joueur.wait_not("visible", timeout=1, retry_interval=0.01)
+        dialogue_joueur.wait_not("visible", timeout=2, retry_interval=0.02)
+        print(f"[bot][debug] {nom_defaut!r} : dialogue fermé -> +{time.monotonic() - t_avant_fermeture:.2f}s")
     except Exception as exc:
-        print(f"[bot][debug] Dialogue joueur {nom_defaut!r} toujours visible après OK ? ({exc})")
+        print(f"[bot][debug] {nom_defaut!r} : dialogue TOUJOURS visible après OK ? ({exc})")
 
-    print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}.")
+    print(f"[bot] Joueur {nom_defaut!r} renommé en {nom_joueur!r}. (cycle total : {time.monotonic() - t_debut:.2f}s)")
 
 
 # Tarifs disponibles pour l'achat de parties par joueur, via
@@ -325,6 +343,18 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
         _scan_diagnostic(fenetre, f"auto_echec_Parties_fenetrepdv_{nom_joueur}")
         raise RuntimeError(f"Fenêtre 'PDV - Vente des parties' non ouverte pour {nom_joueur!r}")
 
+    # Vérification (non bloquante) : le titre de la fenêtre PDV doit
+    # mentionner ce joueur. Sert à détecter si le clic positionnel a en
+    # fait ouvert le PDV d'un AUTRE joueur (jamais vérifié jusqu'ici) -
+    # piste à surveiller pour la prochaine anomalie de ce type.
+    try:
+        titre_pdv = fenetre_pdv.window_text()
+    except Exception:
+        titre_pdv = "?"
+    print(f"[bot][debug] Fenêtre PDV ouverte : titre={titre_pdv!r} (attendu contenant {nom_joueur!r} ou {nom_defaut!r}).")
+    if nom_joueur not in titre_pdv and nom_defaut not in titre_pdv:
+        print(f"[bot][debug] ATTENTION : titre PDV ne mentionne ni {nom_joueur!r} ni {nom_defaut!r} !")
+
     try:
         grille_produits = fenetre_pdv.child_window(auto_id="gridProducts", control_type="Pane")
         bouton_tarif = grille_produits.child_window(title=titre_bouton, control_type="Button")
@@ -332,10 +362,21 @@ def _appliquer_tarif_parties(fenetre, index_joueur, nom_defaut, nom_joueur, tari
 
         _cliquer(fenetre_pdv.child_window(auto_id="btnPayment", control_type="Button"))
 
+        # Vérifie la fermeture effective (plafond remonté à 4s + une
+        # 2e tentative de clic OK) : une fenêtre PDV encore ouverte au
+        # moment où le joueur suivant démarre peut fausser des recherches
+        # ailleurs dans l'appli (cf. bug 'joueur2' ambigu du 2026-07-19,
+        # cf. docstring de _configurer_joueur).
         try:
-            fenetre_pdv.wait_not("visible", timeout=3, retry_interval=0.03)
-        except Exception as exc:
-            print(f"[bot][debug] Fenêtre PDV de {nom_joueur!r} toujours visible après OK ? ({exc})")
+            fenetre_pdv.wait_not("visible", timeout=4, retry_interval=0.03)
+        except Exception:
+            print(f"[bot][debug] Fenêtre PDV de {nom_joueur!r} encore visible, nouvelle tentative de clic OK...")
+            try:
+                _cliquer(fenetre_pdv.child_window(auto_id="btnPayment", control_type="Button"))
+                fenetre_pdv.wait_not("visible", timeout=3, retry_interval=0.03)
+            except Exception as exc:
+                print(f"[bot][debug] ÉCHEC fermeture fenêtre PDV de {nom_joueur!r} : {exc}")
+                _scan_diagnostic(fenetre, f"auto_echec_Parties_fermeture_{nom_joueur}")
 
         print(f"[bot] Tarif {tarif!r} ({titre_bouton!r}) appliqué à {nom_joueur!r}.")
     except Exception:
