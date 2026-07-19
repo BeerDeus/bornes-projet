@@ -143,26 +143,35 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
     DECALAGE_CASE_SELECTION = 9
 
     lane_control = fenetre.child_window(auto_id="LaneControl", control_type="Window")
-    enfants = lane_control.children()
 
     # 1. Décoche toutes les cases à cocher de l'écran (piste + joueurs), en
-    # gardant la liste de celles qu'on a touchées pour pouvoir les
-    # recocher si la suite échoue (sinon "Ajout parties" se retrouve sans
-    # aucune sélection et plante à son tour).
-    decochees = []
-    for enfant in enfants:
+    # gardant la liste des INDEX touchés (pas les objets wrapper eux-mêmes :
+    # ils peuvent devenir invalides après les clics, cf. note ci-dessous) pour
+    # pouvoir les recocher si la suite échoue (sinon "Ajout parties" se
+    # retrouve sans aucune sélection et plante à son tour).
+    enfants = lane_control.children()
+    decochees_index = []
+    for i, enfant in enumerate(enfants):
         try:
             if enfant.friendly_class_name() != "CheckBox":
                 continue
             if enfant.get_toggle_state():
                 enfant.click_input()
                 time.sleep(0.05)
-                decochees.append(enfant)
+                decochees_index.append(i)
         except Exception:
             continue
 
     try:
         # 2. Repère le nom du joueur, prend la case N positions plus loin.
+        # Important : on re-scanne les enfants ICI plutôt que de réutiliser
+        # la liste récupérée avant le décochage. Conqueror (WPF) semble
+        # invalider/régénérer certains éléments après les clics précédents,
+        # ce qui fait échouer silencieusement la recherche par nom si on
+        # garde les anciennes références (cause probable de l'échec observé
+        # alors que le décalage +9 est structurellement correct).
+        enfants = lane_control.children()
+
         index_nom = None
         for i, enfant in enumerate(enfants):
             try:
@@ -192,10 +201,16 @@ def _appliquer_tarif_ce(fenetre, nom_joueur):
         print(f"[bot] Tarif CE appliqué à {nom_joueur!r}.")
     except Exception:
         # Restaure l'état initial (tout coché) pour ne pas casser la suite
-        # du parcours (ex: "Ajout parties").
-        for case in decochees:
+        # du parcours (ex: "Ajout parties"). Re-scan frais également, pour
+        # la même raison qu'au point 2 (ne pas réutiliser des références
+        # potentiellement invalidées).
+        enfants_restauration = lane_control.children()
+        for i in decochees_index:
             try:
-                if not case.get_toggle_state():
+                if i >= len(enfants_restauration):
+                    continue
+                case = enfants_restauration[i]
+                if case.friendly_class_name() == "CheckBox" and not case.get_toggle_state():
                     case.click_input()
                     time.sleep(0.05)
             except Exception:
