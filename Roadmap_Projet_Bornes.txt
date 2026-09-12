@@ -1,0 +1,89 @@
+Feuille de Route Projet (Roadmap Détaillée)
+Approche Agile (MVP) & Découpage en Sprints
+
+Stratégie: Développer par itérations courtes (Minimum Viable Product). L'objectif est de valider les risques techniques majeurs en premier (le bot, le matériel) avant de s'investir dans le design final et les fonctionnalités secondaires.
+Estimations : exprimées en jours ouvrés, sur la base d'un développement en binôme avec assistance IA (rythme accéléré). Chaque phase inclut une marge pour tests, sans quoi la fiabilité visée (100% sur les encaissements) n'est pas atteignable.
+
+État au 2026-07-21 : Phase 1 validée, Phase 2 quasi complète (Trivec en mock, pas d'accès API), et plusieurs items des Phases 4/5 déjà développés en avance (backend/app-admin, wizard Bowling) suite aux demandes de Beer du 2026-07-19. Incident actif en prod : BDD Neon injoignable depuis Hostinger (bloque tout /api/admin/*) - cf. backend/README.md "Diagnostic BDD", fix en cours (driver HTTP Neon).
+
+Phase 1 : Preuve de Concept et Infrastructure (Le "Squelette") — 4 à 5 jours [VALIDÉE]
+Objectif : Valider la faisabilité des points critiques sans se soucier du design et poser l'architecture logicielle.
+Backend :
+[x] Mise en place de l'environnement Node.js basique (API) (init du repo, configuration ESLint/Prettier). — 0,5 j
+[x] Création d'un serveur WebSocket basique (ping/pong) avec gestion de la reconnexion automatique côté client. — 1 j (cf. backend/src/botRelay.js : heartbeat + timeout adaptatif par nb de joueurs)
+Frontend :
+[~] Création d'une application Capacitor de test avec un simple bouton "Nouvelle Partie". — 0,5 j (fait en HTML brut - test-client/index.html - pas encore encapsulé Capacitor)
+[ ] Configuration de la compilation Android locale. — 0,5 j (pas commencé, pas de tablette dispo à ce jour)
+Automatisation (Le vrai test) :
+[x] Développement du bot Python (pywinauto) sur le PC Conqueror. — 1 j
+[x] Création du script capable de lire l'arbre de la fenêtre Conqueror, d'ouvrir une piste et d'entrer un nom "Test". — 1 j
+[x] Connexion du bot Python au serveur WebSocket, avec heartbeat périodique. — 0,5 j
+[x] Documentation des identifiants UI Conqueror utilisés (version logicielle figée, capture des sélecteurs). — 0,5 j (cf. bot/scans/*.txt)
+Livrable: Appuyer sur la tablette crée instantanément une partie dans Conqueror en passant par le réseau local, et une coupure réseau volontaire ne casse pas la session. — VALIDÉ (parcours réel bout en bout confirmé, cf. README).
+
+Phase 2 : Structuration des Données & API Bar — 5 à 6 jours [QUASI COMPLÈTE]
+Objectif : Mise en place de la base de données et gestion des commandes sans paiement.
+Base de données :
+[x] Création de la structure PostgreSQL (Produits, Commandes, Statuts) via un ORM (Prisma ou TypeORM). — 1 j
+[x] Création des tables Utilisateurs (Admin) et Catégories, avec séparation des rôles. — 0,5 j (modèle Utilisateur/RoleUtilisateur en base, pas encore de route de login - cf. commentaire adminCommandes.js)
+Frontend :
+[x] Ajout d'un catalogue "Bar" basique sur la borne (récupéré depuis la BDD). — 1 j (app-borne/src/pages/Bar.jsx + catalogSlice.js)
+[x] Mise en place du système de panier (ajout, suppression, calcul du total), persistant en cas de coupure réseau courte. — 1 j (cartSlice.js, persistance localStorage)
+Intégration Trivec :
+[~] Interfaçage Node.js avec l'API Trivec dans un environnement de bac à sable (sandbox). — 1 j (bloqué : pas encore d'accès à l'API/sandbox Trivec - implémentation mock stable en attendant, cf. backend/src/trivec/client.js)
+[~] Génération du payload exact attendu par le système de caisse. — 0,5 j (payload mocké, à valider une fois l'accès réel obtenu)
+Qualité :
+[x] Tests d'intégration sur le flux commande → BDD → Trivec (cas nominal + échec d'impression). — 1 j (via mock Prisma en mémoire, cf. backend/test/ ; un vrai test contre une Postgres réelle reste à écrire)
+Livrable: Une commande passée sur la tablette imprime un ticket physique au bar via Trivec, et résiste à un test de coupure réseau. — PARTIEL (flux validé en mock ; ticket réel Trivec en attente de l'accès API).
+
+Phase 3 : Périphériques Financiers (Le "Nœud" Technique) — 7 à 9 jours [NON COMMENCÉE]
+Objectif : Le nœud technique: relier la tablette aux périphériques de paiement, avec une fiabilité maximale.
+Analyse Matérielle :
+[ ] Audit des connexions Cashdro et TPE (Réseau IP vs USB/Bluetooth) et documentation des protocoles. — 1 j
+[ ] Clarification du périmètre de conformité PCI-DSS avec le fournisseur TPE (qui gère la saisie carte). — 0,5 j (dépendance externe, à lancer en premier)
+Développement Intégration :
+[ ] Développement des requêtes HTTP (si IP) ou des plugins natifs Capacitor (si USB) (écriture du code Java/Kotlin si nécessaire). — 3 j
+Gestion des Flux :
+[ ] Intégration du flux de paiement sécurisé en base de données (Statuts: "En attente de paiement", "Payé", "Échoué"). — 1 j (statuts déjà modélisés en base - EN_COURS/ENVOYEE_BAR/PAYEE/ECHOUEE/ANNULEE - mais paiement bowling encore simulé à 100%, totalCentimes=0)
+[ ] Gestion des timeouts (si le client part sans payer) et annulation de transaction côté TPE/Cashdro. — 1 j
+[ ] Gestion des erreurs matérielles (papier, TPE déconnecté, fonds insuffisants monnayeur) avec messages clairs. — 1 j
+Qualité :
+[ ] Tests de bout en bout sur cas d'échec (TPE débranché en cours de transaction, coupure réseau pendant paiement). — 1,5 j
+Livrable: La borne peut encaisser une commande par carte ou espèce avec retour de statut fiable, y compris sur les scénarios d'échec.
+
+Phase 4 : Expérience Utilisateur (UX) & Modules Complémentaires — 5 à 6 jours [PARTIELLEMENT FAITE EN AVANCE]
+Objectif : Rendre l'application belle, fluide et prête pour le public.
+Note : le wizard Bowling complet a été développé en avance sur le plan initial (demande Beer du 2026-07-19), avant même la Phase 3 (paiement encore simulé).
+Design :
+[ ] Refonte graphique de l'application (UI finale) (animations de transition, boutons adaptés aux gros doigts). — 2 j (UI actuelle fonctionnelle mais basique, pas de passe design)
+Fonctionnalités Spécifiques :
+[~] Implémentation du lecteur de QR Code pour les Pass CE, avec verrou d'unicité en base contre le scan simultané. — 1,5 j (champ de saisie manuelle en place - Bowling.jsx - mais pas de scan QR ni de contrainte d'unicité anti-fraude)
+[x] Développement du module de configuration du Bowling (Choix des chaussures, activation des bumpers automatiques). — 1 j (bumpers/barrières par joueur en place ; choix des chaussures pas encore fait)
+Robustesse :
+[~] Gestion des cas d'erreur (TPE débranché, plus de papier, annulation utilisateur, perte de connexion) avec écrans dédiés. — 1 j (erreurs bot gérées et affichées - botSucces/botErreur - erreurs TPE/papier hors périmètre tant que Phase 3 n'est pas commencée)
+[ ] Kiosk Mode strict (blocage navigation Android, retour accueil après inactivité). — 0,5 j (pas de build Android à ce jour)
+Livrable: Une application finalisée, prête à être testée par les clients en mode "Alpha".
+
+Phase 5 : Déploiement Beta, Réservations Web & Back-Office — 7 à 8 jours de dev + 1 à 2 semaines de test terrain [BACK-OFFICE FAIT EN AVANCE]
+Objectif : Ouverture vers l'extérieur et mise en production, sous contrôle.
+Note : l'interface d'administration (Back-Office) a été développée en avance sur le plan initial, à la demande de Beer (2026-07-19, "un backend à la WordPress avec les modules de côté").
+Côté Web / Distant :
+[ ] Développement du module web "Réservation/Calendrier" pour les clients à distance. — 2 j
+[ ] Synchronisation des plannings avec la base de données Node.js. — 1 j
+[x] Création de l'interface d'administration (Back-Office) pour le patron, incluant le statut des bornes et du bot. — 2 j (app-admin/ : liste commandes, détail commande, statut système bot+BDD, paramètres tarifs bowling)
+[x] Authentification du Back-Office (auth interne JWT + bcrypt, cf. demande Beer 2026-07-21 - /api/admin/* était public sans login jusque-là). Page de connexion app-admin, comptes créés via prisma/seed.js (ADMIN/ACCUEIL/BAR), mutations tarifs bowling réservées ADMIN. Pas encore de self-service (reset mot de passe, création de compte depuis l'UI).
+Exploitation & Secours :
+[~] Mise en place du monitoring actif (alertes bot injoignable, échecs paiement, borne hors ligne) avec canal de notification défini. — 1 j (diagnostic /api/admin/statut + /api/sante en place - StatutSysteme.jsx - mais pas d'alerte/notification externe type Slack/email)
+[ ] Rédaction de la procédure de rollback vers l'ancien système (déclencheurs, étapes, responsable). — 0,5 j
+[ ] Session de formation du personnel (accueil, bar) sur les nouveaux écrans et la procédure de secours. — 0,5 j
+Déploiement et Test :
+[ ] Déploiement physique sur UNE SEULE borne pour test en conditions réelles (Beta), avec l'ancien système conservé en secours actif. — 0,5 j
+[~] Mise en place des scripts de démarrage automatique (Kiosk mode au démarrage de la tablette, lancement de l'API au boot du serveur). — 0,5 j (déploiement continu du backend sur Hostinger à chaque push - rien à lancer côté API ; kiosk mode tablette non applicable, pas de build Android)
+[ ] Test de charge simulant un rush (plusieurs commandes/paiements simultanés) avant extension du parc. — 1 j
+Critères de sortie de Beta (à valider avant rollout complet) :
+[ ] Taux d'échec transaction < seuil défini avec le patron sur la période de test.
+[ ] Aucun incident bloquant nécessitant un rollback pendant au moins X jours d'exploitation continue.
+[ ] Temps de réponse bot/paiement conforme aux attentes en période de rush réelle (pas seulement en test synthétique).
+Livrable: Solution opérationnelle, validée sur le terrain, prête pour un déploiement sur l'ensemble du parc.
+
+Durée totale estimée : environ 5 à 6 semaines de développement, plus 1 à 2 semaines d'exploitation Beta en conditions réelles avant rollout complet.

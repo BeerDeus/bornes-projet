@@ -739,7 +739,9 @@ table.liste tbody tr:last-child td {
 
 .champ-formulaire input[type="text"],
 .champ-formulaire input[type="time"],
-.champ-formulaire input[type="number"] {
+.champ-formulaire input[type="number"],
+.champ-formulaire input[type="email"],
+.champ-formulaire input[type="password"] {
   width: 100%;
   padding: 8px 12px;
   border: 1px solid var(--border);
@@ -901,4 +903,69 @@ table.liste tbody tr:last-child td {
   border: 1px dashed var(--border-fort);
   border-radius: var(--radius-lg);
   background: var(--surface-soft);
+}
+
+/* --- Connexion (cf. demande Beer 2026-07-21) --- */
+.page-connexion {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 20px;
+}
+
+.carte-connexion {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.connexion-entete {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.bouton-connexion {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* --- Utilisateur connecté (pied de sidebar) --- */
+.sidebar-utilisateur {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.sidebar-utilisateur-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebar-utilisateur-email {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-utilisateur-role {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-discret);
 }

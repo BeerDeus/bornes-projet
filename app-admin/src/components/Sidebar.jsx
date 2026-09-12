@@ -5,7 +5,8 @@
 import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { MODULES } from "../config";
-import { IconActivity, IconBar, IconBowling, IconChevron, IconKaraoke, IconQuiz } from "./icons";
+import { useAuth } from "../contexteAuth";
+import { IconActivity, IconBar, IconBowling, IconChevron, IconKaraoke, IconLogout, IconQuiz } from "./icons";
 import ThemeToggle from "./ThemeToggle";
 
 const ICONES = {
@@ -17,6 +18,7 @@ const ICONES = {
 
 export default function Sidebar() {
   const location = useLocation();
+  const { utilisateur, deconnecter } = useAuth();
   const moduleActifCle = MODULES.find((m) => location.pathname.startsWith(`/${m.cle}`))?.cle;
 
   const [ouvert, setOuvert] = useState(() => new Set(moduleActifCle ? [moduleActifCle] : []));
@@ -98,6 +100,22 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-pied">
+        {utilisateur && (
+          <div className="sidebar-utilisateur">
+            <div className="sidebar-utilisateur-info">
+              <span className="sidebar-utilisateur-email">{utilisateur.email}</span>
+              <span className="sidebar-utilisateur-role">{utilisateur.role}</span>
+            </div>
+            <button
+              type="button"
+              className="bouton-icone"
+              onClick={deconnecter}
+              title="Se déconnecter"
+            >
+              <IconLogout />
+            </button>
+          </div>
+        )}
         <ThemeToggle />
       </div>
     </nav>

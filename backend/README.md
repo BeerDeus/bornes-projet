@@ -5,115 +5,81 @@
 ```
 cd backend
 npm install
-cp .env.example .env   # remplir DATABASE_URL (voir ci-dessous)
+cp .env.example .env   # DATABASE_URL + JWT_SECRET (voir sections ci-dessous)
 npx prisma generate
-npx prisma migrate dev --name init   # crée les tables
-node prisma/seed.js                  # articles bar de test + utilisateur admin
+npx prisma migrate dev --name init   # crée les tables (déjà fait en prod, inutile de rejouer dessus)
+node prisma/seed.js                  # articles bar de test + compte admin (mot de passe affiché une fois)
 npm start
 ```
 
-## Base de données PostgreSQL - option d'hébergement
+## Base de données PostgreSQL
 
-Hostinger mutualisé (là où tourne actuellement `site-hostinger/`) ne fait **pas**
-tourner Postgres nativement. Deux options pour la Phase 2 :
+Hostinger mutualisé ne fait pas tourner Postgres nativement - BDD hébergée sur Neon
+(managé, gratuit). Pour du dev local avec une Postgres à toi à la place :
+`docker run -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16` puis
+`DATABASE_URL="postgresql://postgres:dev@localhost:5432/postgres"`.
 
-- **VPS Hostinger + Docker** (`docker run -e POSTGRES_PASSWORD=... -p 5432:5432 postgres:16`) -
-  garde tout chez le même hébergeur, mais nécessite de passer sur une offre VPS.
-- **Postgres managé externe** (Neon, Supabase, Railway... offres gratuites suffisantes
-  pour du dev/test) - le backend Node s'y connecte via `DATABASE_URL`, où qu'il tourne.
+**Diagnostic** : `GET /api/sante` et `GET /api/admin/statut` testent la connexion (bornée
+à 5s, pour échouer proprement plutôt que de pendre indéfiniment). `bdd.driver` dans
+`/api/admin/statut` indique quel driver Prisma tourne réellement (`neon-http` ou
+`pg-standard`) - utile pour vérifier qu'un déploiement a bien pris effet.
 
-Pour du dev local sur ta machine : `docker run -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16`
-puis `DATABASE_URL="postgresql://postgres:dev@localhost:5432/postgres"`.
+**Driver Neon HTTP** (`src/db.js`) : si `DATABASE_URL` pointe vers un host `*.neon.tech`,
+Prisma passe par `@neondatabase/serverless` + `@prisma/adapter-neon` (requêtes en HTTPS
+plutôt qu'en TCP brut sur le port 5432) - certains hébergements mutualisés comme
+Hostinger filtrent ce port. Sinon (Postgres locale), driver `pg` standard inchangé.
+Nécessite `previewFeatures = ["driverAdapters"]` dans `schema.prisma` (déjà en place) et
+donc un `npx prisma generate` après tout `npm install` sur un poste qui ne l'a pas encore.
+
+## Auth Back-Office (`/api/admin/*`)
+
+Auth interne JWT + bcrypt (pas de service externe type Firebase) :
+
+- `POST /api/auth/login { email, motDePasse }` → `{ token, utilisateur }`.
+  `GET /api/auth/moi` (`Authorization: Bearer <token>`) vérifie qu'une session est
+  toujours valide - utilisé par app-admin au chargement.
+- `exigerAuth` (`src/middlewareAuth.js`) protège tout `/api/admin/*` : lecture ouverte à
+  tout compte actif, `exigerRole("ADMIN")` en plus sur les mutations de tarifs bowling
+  (`adminTarifsBowling.js`).
+- `JWT_SECRET` **obligatoire** (le serveur refuse de démarrer sans - pas de valeur par
+  défaut en dur dans le code public). Génère une valeur différente par environnement
+  (local / Hostinger) avec `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`.
+  Doit être défini à la fois en local (`.env`) et dans les variables d'environnement
+  Hostinger (jamais automatique via `git push`).
+- Comptes créés à la main via `prisma/seed.js` (pas d'inscription en self-service) -
+  comptes ACCUEIL/BAR à créer en base au besoin.
 
 ## Contrainte financière (commande PAYEE ⇒ transactionTpeId)
 
-Le schéma Prisma ne peut pas exprimer nativement une contrainte CHECK conditionnelle
-(cf. CDC - "une commande ne peut passer en statut Payée que si l'identifiant de
-transaction TPE est valide"). Elle est appliquée :
-- **côté application** dans `src/routes/commandes.js` (PATCH `/commandes/:id/statut` refuse
-  `PAYEE` sans `transactionTpeId`, testé dans `test/commandes.logique.test.js`) ;
-- **côté BDD** via la migration `prisma/migrations/20260719140000_add_check_payee_transaction/`
-  (déjà écrite - `npx prisma migrate deploy` l'applique en plus de `init`).
-
-## Diagnostic BDD (`/api/sante`)
-
-Ajouté suite à un incident (2026-07-19) : `/api/categories` chargeait indéfiniment sur
-Hostinger (sans erreur) alors que tout marchait en local avec la même `DATABASE_URL`.
-Hypothèse la plus probable : Hostinger (hébergement mutualisé) filtre/bloque les
-connexions TCP sortantes vers un port de BDD externe comme 5432, ce qui fait rester la
-requête bloquée indéfiniment (pas d'erreur, pas de timeout par défaut côté Postgres/Prisma).
-
-`GET /api/sante` fait un `SELECT 1` borné à 5s (au lieu de dépendre uniquement du
-`connect_timeout` de l'URL) et renvoie soit `{ok:true}`, soit une erreur claire en 503 -
-sert à distinguer rapidement "la BDD ne répond pas" d'un autre problème. Toujours garder
-`connect_timeout=10` dans `DATABASE_URL` (voir `.env.example`) pour que les vraies routes
-échouent proprement plutôt que de pendre indéfiniment.
-
-Si `/api/sante` confirme que la BDD est injoignable depuis Hostinger, la solution standard
-est de passer par le driver HTTP de Neon (`@neondatabase/serverless` + `@prisma/adapter-neon`,
-qui interroge la BDD via HTTPS au lieu d'une connexion TCP brute sur 5432 - contourne ce
-genre de restriction réseau). Pas encore implémenté : à faire si le diagnostic le confirme.
-
-## Mise à jour de schéma (2026-07-19) - modules commande + numérotation
-
-Ajout du parcours client Bowling complet (wizard) + identifiant humain par module
-(BO001, BA001...). Après avoir tiré ces fichiers :
-
-```
-cd backend
-npm install
-npx prisma generate
-npx prisma migrate dev --name ajout_bowling_module_numero
-```
-
-Nouveautés côté schéma : `Commande.numero`/`module` (généré via `CompteurModule`, cf.
-`src/numeroCommande.js`), `Commande.cgvAccepteesLe`/`codeAvantageSaisi`/`botSucces`/
-`botErreur`/`botPiste`, nouveau modèle `CommandeJoueurBowling`. Les commandes de test déjà
-en base gardent `numero = null` (pas de backfill, sans conséquence).
-
-Nouvelle route : `POST /api/commandes-bowling` (crée la commande, simule le paiement -
-toujours un succès tant que la Phase 3/TPE n'est pas branchée - puis relaie au bot
-Conqueror via `src/botRelay.js`, réutilisé aussi par le canal socket direct historique).
-Testé via mock : `node test/bowlingCommandes.logique.test.js`.
+Le schéma Prisma ne peut pas exprimer nativement une contrainte CHECK conditionnelle (cf.
+CDC - "une commande ne peut passer en statut Payée que si l'identifiant de transaction
+TPE est valide"). Appliquée côté application (`src/routes/commandes.js`, PATCH
+`/commandes/:id/statut`) et côté BDD (migration `20260719140000_add_check_payee_transaction`).
 
 ## Trivec (mock)
 
-Pas d'accès à l'API/sandbox Trivec à ce jour. `src/trivec/client.js` expose une
-interface stable (`TrivecClient.envoyerCommande`) avec une implémentation mock qui
-logge le payload et simule une réponse. Bascule via `TRIVEC_MODE=reel` une fois l'accès
-obtenu (implémenter alors `TrivecClientReel`, rien d'autre à changer). `TRIVEC_MOCK_ECHEC=true`
-force un échec simulé, utile pour tester le cas d'erreur.
+Pas d'accès à l'API/sandbox Trivec à ce jour. `src/trivec/client.js` expose une interface
+stable (`TrivecClient.envoyerCommande`) avec une implémentation mock qui logge le payload
+et simule une réponse. Bascule via `TRIVEC_MODE=reel` une fois l'accès obtenu.
+`TRIVEC_MOCK_ECHEC=true` force un échec simulé, utile pour tester le cas d'erreur.
+
+## Prisma figé en 5.22.0
+
+`@prisma/client`/`prisma` sont épinglés en dur (pas de `^`) dans `package.json`. Prisma 7
+casse `migrate` avec ce schéma (`url` dans `datasource` plus supporté sans
+`prisma.config.ts` + adaptateur) - ne pas laisser `npm update`/`npm install` remonter la
+version sans retester `migrate`/`generate`.
 
 ## Tests
 
 ```
 node test/commandes.logique.test.js
 node test/bowlingCommandes.logique.test.js
+node test/adminCommandes.logique.test.js
+node test/adminStatut.logique.test.js
+node test/adminTarifsBowling.logique.test.js
+node test/adminAuth.logique.test.js
+node test/tarificationBowling.logique.test.js
 ```
-Tests logique métier (calcul du total serveur, validations, contrainte PAYEE, échec
-Trivec, numérotation par module, paiement simulé, échec bot) via un mock Prisma en
-mémoire (cf. `test/_mockPrisma.js`) - pas besoin d'une vraie Postgres pour ces tests.
-Un vrai test d'intégration (Postgres réelle) reste à écrire une fois une instance dispo.
-
-## Incidents résolus (2026-07-19)
-
-- **Prisma 7 incompatible** : `^7.8.0` (résolu automatiquement par npm) a cassé `migrate`
-  (`url` dans `datasource` plus supporté sans `prisma.config.ts` + adaptateur). Figé sur
-  `5.22.0` (exact, pas de `^`) dans `package.json` - stable, compatible avec le schéma tel
-  quel.
-- **DATABASE_URL non chargé au runtime** : la CLI Prisma (`generate`/`migrate`) lit `.env`
-  automatiquement, mais `node server.js` non - sans `dotenv`, le process crashait dès le
-  `require` (avant même `app.listen()`), d'où "Failed to fetch" en local et 503 en boucle
-  sur Hostinger. Fix : `require("dotenv").config()` en toute première ligne de
-  `server.js`. Si l'hébergeur injecte déjà `DATABASE_URL` comme vraie variable d'env de la
-  plateforme, `dotenv` ne l'écrase pas (sans risque).
-- **Crash total sur une erreur de route** : les handlers async d'Express 4 ne remontent pas
-  automatiquement une erreur (contrairement à Express 5) - une requête Prisma qui échoue
-  partait en unhandled rejection, qui tue tout le process Node par défaut (coupant au passage
-  le canal WebSocket bot Conqueror). Fix : `src/asyncHandler.js` (wrapper appliqué à toutes
-  les routes) + middleware d'erreur global dans `server.js` (500 propre au lieu d'un crash).
-
-`prisma validate`/`generate` n'ont pas pu être exécutés dans le sandbox utilisé pour écrire
-ce code (le domaine `binaries.prisma.sh` y était bloqué - 403 Forbidden) ; la logique métier
-est testée via mock (`test/`). Confirmé fonctionnel côté Beer : `migrate dev --name init` a
-créé les tables sur la vraie instance Neon.
+Tests de logique métier via un mock Prisma en mémoire (`test/_mockPrisma.js`) - pas
+besoin d'une vraie Postgres. Un vrai test d'intégration (Postgres réelle) reste à écrire.

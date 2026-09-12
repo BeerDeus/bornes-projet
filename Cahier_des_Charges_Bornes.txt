@@ -1,0 +1,63 @@
+Cahier des Charges Technique Détaillé
+Refonte de l'Infrastructure Logicielle - Bornes Interactives & Réservations
+
+1. Contexte, Problématiques et Objectifs
+L'infrastructure logicielle actuelle (basée sur un backend WordPress et un bot fonctionnant par coordonnées absolues) présente des failles de stabilité critiques: crashs fréquents, incohérences lors de la navigation (Pass CE) et fragilité de l'automatisation.
+* Dette technique actuelle : L'utilisation de requêtes HTTP en boucle (polling) sur un système WordPress sature le réseau et crée des latences. Le bot d'automatisation clique à l'aveugle, ce qui entraîne des erreurs de saisie irréversibles dans le logiciel métier Conqueror.
+* Objectifs métiers : Développer une solution interne robuste, moderne, et parfaitement adaptée au matériel existant, tout en réduisant les coûts de maintenance externes. La solution doit fluidifier le parcours client en période de rush et garantir une fiabilité à 100% sur les encaissements.
+
+2. Architecture Technique Détaillée
+
+2.1 Frontend : L'Application Borne (Kiosk App)
+* Technologie: Développement Web (React, Vue.js, ou HTML/JS moderne) encapsulé via Capacitor.
+* Gestion d'état (State Management) : Utilisation de Redux (React) ou Pinia (Vue) pour maintenir l'état du panier, éviter la perte de données lors du changement de module (ex: passer du Bar au Bowling) et gérer proprement le multi-threading.
+* UX/UI et Sécurité de Navigation : Interface optimisée pour le tactile, gestion stricte des focus (notamment pour éviter les conflits lors du scan des Pass CE), et modules clairs (Bowling, Bar, Quiz). Mise en place d'un "Kiosk Mode" strict (blocage des boutons de navigation Android, retour automatique à l'accueil après X secondes d'inactivité).
+* Mode dégradé / offline : L'application doit détecter la perte de connexion au backend (heartbeat WebSocket) et basculer sur un écran "Service momentanément indisponible" plutôt que de laisser l'utilisateur composer une commande qui ne pourra jamais aboutir. Aucune commande financière n'est acceptée hors ligne.
+
+2.2 Backend : API & Temps Réel
+* Technologie: Node.js (via Express ou NestJS) remplaçant WordPress.
+* Base de données: PostgreSQL, indispensable pour garantir l'intégrité des transactions financières et des commandes. Utilisation de contraintes relationnelles fortes (ex: une commande ne peut passer en statut "Payée" que si l'identifiant de transaction TPE est valide).
+* Communication bidirectionnelle : Mise en place de WebSockets (ex: Socket.io) pour une communication bidirectionnelle en temps réel entre les bornes, le bar, et le bot Conqueror. Fini le rafraîchissement en boucle (polling).
+* Reconnexion & continuité : Chaque client (borne, bot) implémente une stratégie de reconnexion automatique avec backoff exponentiel. Les événements critiques (commande, paiement) sont persistés en base immédiatement à réception, indépendamment de l'état de la socket, pour ne rien perdre en cas de coupure réseau côté tablette.
+* Monitoring : Intégration d'outils comme PM2 pour la gestion des processus et Sentry pour la remontée d'erreurs en direct. Mise en place d'alertes actives (email/SMS/Slack) sur incidents critiques : bot Conqueror injoignable, échec de paiement répété, borne hors ligne > 2 minutes.
+
+2.3 Intégration Matérielle (Périphériques & TPE)
+* Paiement (Cashdro & TPE): Deux approches possibles selon le matériel:
+  - Connexion Réseau (IP): Requêtes HTTP directes depuis la tablette ou le backend (méthode privilégiée).
+  - Connexion Physique (USB/Bluetooth): Développement ou intégration d'un plugin natif Capacitor (Java/Kotlin) pour faire le pont entre l'app web et le matériel.
+* Gestion des Edge Cases Matériels : Le système devra intercepter les erreurs matérielles : "Plus de papier", "TPE déconnecté", "Fonds insuffisants dans le monnayeur".
+* API Bar (Trivec): Le backend Node.js transmettra les commandes bar formatées (REST ou XML/JSON) directement au système Trivec pour impression instantanée des tickets en cuisine/bar.
+* Conformité paiement : Le périmètre exact de responsabilité PCI-DSS doit être clarifié avec le fournisseur TPE avant le développement de l'intégration (Phase 3). Objectif : la saisie de la carte doit rester gérée nativement par le TPE lui-même (mode "P2PE" ou équivalent), le backend ne recevant qu'un statut de transaction (approuvé/refusé/ID) et jamais de données carte brutes.
+
+2.4 Le Bot d'Automatisation (RPA Conqueror)
+* Technologie: Script Python utilisant des bibliothèques d'automatisation d'interface (RPA) comme pywinauto.
+* Fonctionnement Structurel : Au lieu de cliquer sur des pixels fixes, le script lit l'arbre structurel de l'application Windows et cible les identifiants réels des boutons (ex: Button("Nouvelle Partie")).
+* Fiabilité et Fallback : Le bot devient insensible aux changements de résolution, aux fenêtres déplacées ou aux délais de chargement inattendus. Implémentation d'un système de "Retry" (réessai) en cas de non-réponse de Conqueror, et d'une alerte visuelle/sonore si le bot nécessite une intervention humaine.
+* Healthcheck actif : Le bot envoie un signal de vie (heartbeat) périodique au backend. Une absence de heartbeat déclenche une alerte immédiate (voir 2.2 Monitoring), sans attendre l'échec d'une commande cliente.
+* Gestion du risque de mise à jour Conqueror : La version du logiciel Conqueror ciblée est figée et documentée (numéro de version, capture des identifiants UI utilisés). Toute mise à jour de Conqueror doit être testée sur un poste hors production avant déploiement, et déclenche une repasse de non-régression du bot.
+
+3. Spécifications Fonctionnelles
+* Prise de Commande Multi-Modules: Interfaces dédiées pour l'enregistrement bowling (noms des joueurs, bumpers, tailles de chaussures), les commandes bar, karaoké, quiz.
+* Gestion des Pass CE : Module de scan de QR code sécurisé ne perturbant pas le flux d'interface. Le scan devra être validé côté serveur pour éviter la fraude (usage unique). La validation d'un Pass CE est traitée comme une transaction atomique en base de données (verrou/contrainte d'unicité) afin d'empêcher qu'un même Pass soit validé simultanément sur deux bornes (race condition).
+* Réservation en Ligne : Module web synchronisé avec le backend Node.js (via des bibliothèques comme FullCalendar) pour gérer les créneaux depuis l'extérieur.
+* Tableau de Bord Administrateur (Back-Office) : Suivi des commandes, gestion des catalogues (prix/produits) et surveillance de l'état des machines (statut en ligne/hors ligne des bornes, statut du bot Conqueror).
+
+4. Résilience & Continuité de Service
+* Toute commande passée doit survivre à une coupure Wi-Fi de courte durée (persistance immédiate en base, confirmation renvoyée dès reconnexion).
+* En cas d'indisponibilité prolongée du backend ou du bot Conqueror, la borne affiche un message clair et redirige vers l'accueil physique, plutôt que de rester bloquée sur un écran de chargement.
+* Plan de secours (rollback) : tant que l'ancien système (WordPress + bot par coordonnées) n'a pas été formellement décommissionné, il reste disponible en secours pendant toute la phase Beta. Les critères de bascule définitive sont fixés en amont du déploiement complet (voir Roadmap, Phase 5).
+
+5. Sécurité & Conformité
+* Paiement : voir 2.3 (scope PCI-DSS à clarifier avec le prestataire TPE avant développement).
+* Pass CE : anti-fraude par contrainte d'unicité en base + horodatage de scan (voir 3).
+* Accès Back-Office : authentification obligatoire pour l'interface d'administration, séparation des rôles (staff bar / accueil / administration).
+* Les logs applicatifs (Sentry, PM2) ne doivent contenir aucune donnée carte, même partielle.
+
+6. Monitoring & Exploitation
+* Outils : PM2 (process manager), Sentry (erreurs applicatives).
+* Alerting actif sur : bot Conqueror injoignable (absence de heartbeat), échecs de paiement répétés, borne hors ligne, base de données injoignable.
+* Un canal de notification (SMS/Slack/email) doit être défini avant la mise en production, avec un responsable d'astreinte identifié pour les périodes d'ouverture (soirs/week-ends).
+
+7. Formation & Documentation
+* Une session de formation du personnel (accueil, bar) est prévue avant le déploiement Beta, portant sur : nouveaux écrans, gestion des erreurs courantes (TPE déconnecté, plus de papier), procédure de bascule vers le système de secours en cas d'incident majeur.
+* Documentation technique minimale à livrer : schéma d'architecture, procédure de déploiement, procédure de rollback, liste des identifiants UI Conqueror utilisés par le bot.

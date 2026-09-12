@@ -1,41 +1,31 @@
 # Bornes Bowling - Phase 1 (validée) + Phase 2 (en cours)
 
-Ce dossier contient le code Phase 1 (Borne ↔ Backend ↔ Bot Conqueror, validée)
-et le début de la Phase 2 (BDD PostgreSQL + API catalogue/commandes bar,
-app-borne React). Voir `Roadmap_Projet_Bornes.txt` pour le détail.
+Borne ↔ Backend ↔ Bot Conqueror (Phase 1, validée) + BDD PostgreSQL, catalogue/commandes
+bar, Back-Office admin (Phase 2 et suivantes). Voir `Roadmap_Projet_Bornes.txt` pour le
+détail phase par phase.
 
-Contexte Phase 2 : pas encore d'accès à l'API Trivec ni à une tablette
-Android à ce jour. `backend/` et `app-borne/` sont développés et testables
-via navigateur ; l'intégration Trivec tourne en mode mock (articles bar
-temporaires en base) en attendant l'accès réel - voir `backend/README.md`
-(à créer si besoin) et `backend/src/trivec/client.js`.
+Dossiers : `backend/` (API Node.js), `app-borne/` (borne, React/Capacitor à terme),
+`app-admin/` (Back-Office), `bot/` (automatisation Conqueror, Python), `test-client/`
+(page de test Phase 1, sans build).
 
-## Architecture actuelle
+## Architecture
 
 ```
-[index.html dans un navigateur]  --WebSocket-->  [Backend Node.js sur Hostinger]  --WebSocket-->  [bot/conqueror_bot.py]
-      (simule la borne, n'importe où)              https://bowling.m2s-photo.fr      (mode SIMULATION par défaut,
-                                                     (déjà en ligne, rien à lancer)     ne touche pas à Conqueror,
-                                                                                        à lancer SUR le PC Conqueror)
+[app-borne / test-client]  --WebSocket/HTTP-->  [Backend Node.js sur Hostinger]  --WebSocket-->  [bot/conqueror_bot.py]
+      (n'importe où)                              https://bowling.m2s-photo.fr      (mode SIMULATION par défaut,
+                                                    (déjà en ligne, rien à lancer)     à lancer SUR le PC Conqueror)
+
+[app-admin] --------------------------------------------^
+      (Back-Office, même backend)
 ```
 
-Le backend est déployé sur Hostinger (repo GitHub → dossier `site-hostinger`, déploiement
-automatique à chaque `git push`). Tu n'as **plus besoin de le lancer localement**. Seul le
-bot doit tourner sur le PC Conqueror (pywinauto pilote l'UI Windows en local, obligatoire).
+Le backend est déployé sur Hostinger (repo `backend_bowling`, déploiement auto à chaque
+`git push`) - inutile de le lancer localement pour tester depuis une tablette/un
+navigateur pointé dessus. Seul le bot doit tourner en local, sur le PC Conqueror.
 
-Note architecture : héberger le backend sur Hostinger simplifie les tests (accessible de
-partout), au prix d'une dépendance à internet pour le fonctionnement des bornes en prod —
-géré par le mode dégradé prévu au Cahier des Charges (section 4).
+## Bot Conqueror
 
-## Étapes
-
-### 1. Installer les prérequis sur le PC Conqueror (une seule fois)
-
-- Python 3.10+ : https://www.python.org/downloads/ (cocher "Add to PATH" à l'installation)
-
-### 2. Lancer le bot (mode simulation, sans risque)
-
-Dans un terminal (PowerShell), dans `bot/` :
+Prérequis (une fois) : Python 3.10+ (cocher "Add to PATH" à l'install).
 
 ```powershell
 cd bot
@@ -46,62 +36,56 @@ python conqueror_bot.py
 ```
 
 Par défaut `SIMULATION_MODE=true` : le bot se connecte réellement mais ne touche pas à
-Conqueror, il se contente de logger l'action. Tu dois voir :
-`[bot] connecté à https://bowling.m2s-photo.fr (mode SIMULATION)`
+Conqueror (log seulement). Test : ouvrir `test-client/index.html` dans un navigateur,
+cliquer "Nouvelle Partie" → le terminal du bot doit logger l'action et la page afficher
+`{"succes":true,...}`.
 
-### 3. Déclencher le test depuis la "borne"
+**Mode réel** (Conqueror = PRODUCTION, pas un environnement de test) : demande une
+confirmation manuelle par clic (`CONFIRMATION_MANUELLE=true` par défaut) - à faire hors
+heures d'ouverture pour le premier essai. cf. `bot/conqueror_bot.py` pour le détail du
+parcours automatisé.
 
-Ouvrir `test-client/index.html` directement dans un navigateur (double-clic sur le
-fichier). Cliquer sur **"Nouvelle Partie"**.
+## Développement local (backend + app-admin)
 
-Résultat attendu :
-- Le statut "Bot : connecté" s'affiche en haut.
-- Le terminal du bot affiche `[SIMULATION] Ouverture piste + saisie nom 'Test'...`.
-- La page affiche `Résultat : {"succes":true,"piste":3,...}`.
+Deux terminaux séparés (ex: deux panneaux dans VS Code, `` Ctrl+Shift+` `` pour en ouvrir
+un nouveau) :
 
-Si tout ça fonctionne : le canal temps réel borne → backend → bot est validé de bout
-en bout. C'est le livrable de la Phase 1 (cf. Roadmap).
+**Terminal 1 - backend**
+```
+cd backend
+npm install
+cp .env.example .env   # DATABASE_URL + JWT_SECRET, cf. backend/README.md
+npx prisma generate
+node prisma/seed.js    # crée le compte admin, affiche son mot de passe une seule fois
+npm start
+```
 
-### 4. Passer en mode réel (seulement une fois le test simulé validé)
+**Terminal 2 - app-admin**
+```
+cd app-admin
+echo VITE_SERVEUR_URL=http://localhost:3000 > .env.local
+npm install
+npm run dev
+```
 
-Les identifiants réels de Conqueror ont déjà été relevés (via `bot/inspect_conqueror.py`,
-écran "Liste d'attente") et intégrés dans `ouvrir_nouvelle_partie_reelle`.
+Puis `http://localhost:5173/connexion` avec `admin@bowling.local` + le mot de passe
+affiché par le seed. Rien à pousser sur Hostinger pour tester en local.
 
-**Important : Conqueror ici est le système de PRODUCTION**, pas un environnement de
-test. Par sécurité, le mode réel demande une confirmation manuelle dans le terminal
-avant chaque clic effectif (`CONFIRMATION_MANUELLE=true` par défaut) — rien ne se passe
-tant que tu ne tapes pas "o". Idéalement, fais ce premier essai réel **hors heures
-d'ouverture / hors événement**, pas un samedi soir.
+## Tester depuis une tablette Android (contre le backend Hostinger)
 
-Le parcours automatisé (validé en conditions réelles, cf. `bot/conqueror_bot.py` et
-Roadmap Phase 1) :
-
-1. Remplit "Référence" puis clique "Sple Partie" (ouvre la piste, écran LaneControl).
-2. Clique "Nbre joueurs" → dialogue "dlg" → sélectionne le nombre (crée des
-   placeholders "joueur1".."joueurN").
-3. Pour chaque joueur (`data.joueurs`) : renomme son placeholder (`set_text`, pas de
-   frappe clavier simulée - Conqueror filtre l'injection clavier) + bumpers si fourni.
-4. Pour chaque joueur : clique sa cellule "Parties" → fenêtre PDV dédiée → sélectionne
-   son tarif (`CE` / `1` / `2` / `3` / `2+1`) et son nombre de parties.
-5. Optionnel (`data.payer: true`) : clique "Payer" → "Paye" (validé sur tarif CE/0€
-   uniquement pour l'instant).
-
-Non géré pour l'instant (prévu en Phase 4, cf. Cahier des Charges section 3) :
-sélection de la piste (la piste par défaut est utilisée), mode de paiement TPE avant
-"Paye" (seul le cas 0€ est validé).
-
-## Pour tester depuis une vraie tablette Android
-
-Comme le backend est public (Hostinger), `test-client/index.html` (Phase 1) et
-`app-borne/` (Phase 2, catalogue bar + panier + mêmes scénarios bowling) fonctionnent
-depuis n'importe quel appareil avec un navigateur (tablette, téléphone), pas besoin
-d'être sur le même réseau Wi-Fi que le PC Conqueror. Seul le bot doit rester sur ce PC.
+Comme le backend est public, `test-client/index.html` et `app-borne/` fonctionnent
+depuis n'importe quel appareil avec un navigateur, pas besoin d'être sur le Wi-Fi du PC
+Conqueror. Seul le bot doit rester sur ce PC.
 
 ## Si ça ne marche pas
 
-- **"Bot : déconnecté" persistant** → vérifier que le terminal du bot est bien lancé
-  et affiche "connecté".
-- **Résultat `bot_indisponible`** → le bot n'est pas enregistré auprès du serveur,
-  relancer `python conqueror_bot.py`.
-- **Rien ne se passe au clic** → ouvrir la console du navigateur (F12) pour voir les
-  erreurs, vérifier que `SERVEUR_URL` pointe vers la bonne adresse.
+- **"Bot : déconnecté" persistant** → vérifier que `python conqueror_bot.py` tourne et
+  affiche "connecté".
+- **Résultat `bot_indisponible`** → le bot n'est pas enregistré côté serveur, le relancer.
+- **`vite` / `npm start` non reconnu** → `npm install` pas encore fait dans le dossier
+  concerné (`backend/` ou `app-admin/`).
+- **401 sur app-admin après login** → `JWT_SECRET` absent ou différent entre le moment du
+  login et celui de la requête (ex: serveur redémarré avec une autre valeur) - se
+  reconnecter suffit.
+- **Rien ne se passe / erreur réseau** → F12 → onglet Console/Network pour voir l'erreur
+  exacte, vérifier `SERVEUR_URL` / `VITE_SERVEUR_URL`.
