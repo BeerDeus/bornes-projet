@@ -10,77 +10,88 @@ Dossiers : `backend/` (API Node.js), `app-borne/` (borne, React/Capacitor à ter
 
 ## Architecture
 
+Tout tourne en local (plus de backend en ligne : l'ancien domaine n'existe plus).
+
 ```
-[app-borne / test-client]  --WebSocket/HTTP-->  [Backend Node.js sur Hostinger]  --WebSocket-->  [bot/conqueror_bot.py]
-      (n'importe où)                              https://bowling.m2s-photo.fr      (mode SIMULATION par défaut,
-                                                    (déjà en ligne, rien à lancer)     à lancer SUR le PC Conqueror)
-
-[app-admin] --------------------------------------------^
-      (Back-Office, même backend)
+PC backend / démo                                              PC Conqueror
+[app-borne :5173] --WebSocket/HTTP--> [Backend Node.js :3000] <--WebSocket-- [bot/conqueror_bot.py]
+[app-admin :5174] -------------------------^        ^                        (mode REEL par défaut,
+[test-client]     --------------------------------- '                         SERVEUR_URL=http://<IP PC backend>:3000)
 ```
 
-Le backend est déployé sur Hostinger (repo `backend_bowling`, déploiement auto à chaque
-`git push`) - inutile de le lancer localement pour tester depuis une tablette/un
-navigateur pointé dessus. Seul le bot doit tourner en local, sur le PC Conqueror.
+- Backend, borne et admin tournent sur le PC backend (démo).
+- Le bot tourne SUR le PC Conqueror et rejoint le backend via le réseau local :
+  `http://<IP du PC backend>:3000`.
+- Une tablette du même Wi-Fi peut ouvrir la borne via `http://<IP du PC backend>:5173` :
+  elle vise alors automatiquement le backend `http://<IP du PC backend>:3000`.
 
-## Bot Conqueror
+## Démo sur le PC backend
+
+Prérequis (une fois) :
+- `backend/.env` avec `DATABASE_URL` (Neon), `JWT_SECRET`, `PORT=3000` (cf.
+  `backend/.env.example`).
+- `npm install` dans `backend/`, `app-borne/` et `app-admin/`, puis `npx prisma generate`
+  dans `backend/`.
+
+Lancement (cmd, une seule commande, ouvre 3 fenêtres) :
+
+```
+cd /d <dossier du projet> && start "Backend" cmd /k "cd backend && npm start" && start "Borne" cmd /k "cd app-borne && npm run dev -- --host" && start "Admin" cmd /k "cd app-admin && npm run dev"
+```
+
+`--host` sur la borne : la rend accessible depuis une tablette du même Wi-Fi. Vite
+affiche les URL (borne en `:5173`, admin sur le port suivant libre, en général `:5174`).
+
+Pare-feu : autoriser le port **3000 entrant** sur le PC backend (sinon le bot et les
+tablettes ne le joignent pas), et `5173` pour une tablette. IP du PC backend : `ipconfig`
+→ "Adresse IPv4".
+
+Premier lancement : `node prisma/seed.js` dans `backend/` crée le compte admin
+(`admin@bowling.local`, mot de passe affiché une seule fois).
+
+## Bot Conqueror (sur le PC Conqueror)
 
 Prérequis (une fois) : Python 3.10+ (cocher "Add to PATH" à l'install).
 
-```powershell
+```
 cd bot
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-python conqueror_bot.py
 ```
 
-Par défaut `SIMULATION_MODE=true` : le bot se connecte réellement mais ne touche pas à
-Conqueror (log seulement). Test : ouvrir `test-client/index.html` dans un navigateur,
-cliquer "Nouvelle Partie" → le terminal du bot doit logger l'action et la page afficher
-`{"succes":true,...}`.
+URL du backend, au choix (ordre de priorité : argument > variable d'env > `http://localhost:3000`) :
 
-**Mode réel** (Conqueror = PRODUCTION, pas un environnement de test) : demande une
-confirmation manuelle par clic (`CONFIRMATION_MANUELLE=true` par défaut) - à faire hors
-heures d'ouverture pour le premier essai. cf. `bot/conqueror_bot.py` pour le détail du
-parcours automatisé.
+- Argument : `py conqueror_bot.py http://10.30.0.187:3000`
+- PowerShell :
+  ```powershell
+  $env:SERVEUR_URL="http://IP:3000"
+  py conqueror_bot.py
+  ```
+- cmd :
+  ```
+  set SERVEUR_URL=http://IP:3000
+  py conqueror_bot.py
+  ```
 
-## Développement local (backend + app-admin)
+Le bot affiche l'URL utilisée ; si le backend est injoignable, il l'indique et réessaie
+toutes les 5 s (vérifier que le backend tourne, l'IP, et le pare-feu du PC backend).
 
-Deux terminaux séparés (ex: deux panneaux dans VS Code, `` Ctrl+Shift+` `` pour en ouvrir
-un nouveau) :
+**Le bot démarre en mode REEL par défaut** (interagit vraiment avec Conqueror =
+PRODUCTION). Pour une démo sans toucher à Conqueror : `SIMULATION_MODE=true`
+(PowerShell : `$env:SIMULATION_MODE="true"` ; cmd : `set SIMULATION_MODE=true`) - le bot
+se connecte et reçoit les commandes mais se contente de les logger.
+`CONFIRMATION_MANUELLE=true` demande une confirmation avant chaque clic réel (désactivée
+par défaut). cf. `bot/conqueror_bot.py` pour le détail du parcours automatisé.
 
-**Terminal 1 - backend**
-```
-cd backend
-npm install
-cp .env.example .env   # DATABASE_URL + JWT_SECRET, cf. backend/README.md
-npx prisma generate
-node prisma/seed.js    # crée le compte admin, affiche son mot de passe une seule fois
-npm start
-```
-
-**Terminal 2 - app-admin**
-```
-cd app-admin
-echo VITE_SERVEUR_URL=http://localhost:3000 > .env.local
-npm install
-npm run dev
-```
-
-Puis `http://localhost:5173/connexion` avec `admin@bowling.local` + le mot de passe
-affiché par le seed. Rien à pousser sur Hostinger pour tester en local.
-
-## Tester depuis une tablette Android (contre le backend Hostinger)
-
-Comme le backend est public, `test-client/index.html` et `app-borne/` fonctionnent
-depuis n'importe quel appareil avec un navigateur, pas besoin d'être sur le Wi-Fi du PC
-Conqueror. Seul le bot doit rester sur ce PC.
+Test rapide : `test-client/index.html` (ouvert en `file://` sur le PC backend, il vise
+`http://localhost:3000`) → "Nouvelle Partie" → le terminal du bot doit logger l'action.
 
 ## Si ça ne marche pas
 
-- **"Bot : déconnecté" persistant** → vérifier que `python conqueror_bot.py` tourne et
-  affiche "connecté".
+- **"Bot : déconnecté" persistant** → vérifier que `py conqueror_bot.py` tourne et
+  affiche "connecté" ; sinon vérifier `SERVEUR_URL` (IP du PC backend via `ipconfig`) et
+  le pare-feu (port 3000 entrant sur le PC backend).
 - **Résultat `bot_indisponible`** → le bot n'est pas enregistré côté serveur, le relancer.
 - **`vite` / `npm start` non reconnu** → `npm install` pas encore fait dans le dossier
   concerné (`backend/` ou `app-admin/`).

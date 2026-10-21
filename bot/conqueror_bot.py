@@ -4,7 +4,7 @@ Bot RPA Conqueror - Phase 1 (Preuve de Concept)
 À exécuter SUR le PC qui fait tourner Conqueror (pywinauto pilote l'UI Windows
 en local, pas d'accès distant possible).
 
-Mode SIMULATION (par défaut) : le bot se connecte réellement au serveur,
+Mode SIMULATION (SIMULATION_MODE=true, le défaut est le mode REEL) : le bot se connecte réellement au serveur,
 reçoit réellement la commande "nouvelle_partie", mais se contente de logger
 l'action au lieu de toucher à Conqueror. Objectif : valider tout le canal de
 communication sans aucun risque de saisie erronée dans le logiciel métier
@@ -18,6 +18,7 @@ ouvert et visible.
 
 import ctypes
 import os
+import sys
 import threading
 import time
 
@@ -26,7 +27,11 @@ import socketio
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
-SERVEUR_URL = os.environ.get("SERVEUR_URL", "https://bowling.m2s-photo.fr")
+# Backend local (plus d'hébergement en ligne) : 1er argument de ligne de
+# commande (`py conqueror_bot.py http://10.30.0.187:3000`), sinon variable
+# d'env SERVEUR_URL, sinon localhost. Depuis le PC Conqueror, mettre l'IP du
+# PC backend (cf. README).
+SERVEUR_URL = (sys.argv[1] if len(sys.argv) > 1 else "") or os.environ.get("SERVEUR_URL") or "http://localhost:3000"
 # Mode réel par défaut (interagit vraiment avec Conqueror). Remettre à "true"
 # (SIMULATION_MODE=true) pour tester le canal borne<->bot sans toucher à
 # Conqueror, par exemple après une mise à jour de Conqueror ou du parcours.
@@ -1076,7 +1081,20 @@ if __name__ == "__main__":
     if not SIMULATION_MODE:
         print("ATTENTION : mode réel actif, le bot va interagir directement avec Conqueror.")
 
+    print(f"Backend : {SERVEUR_URL}")
+
     threading.Thread(target=envoyer_heartbeat, daemon=True).start()
 
-    sio.connect(SERVEUR_URL)
+    # Pas de retry=True : absent de python-socketio 5.11.0 (requirements.txt).
+    while True:
+        try:
+            sio.connect(SERVEUR_URL)
+            break
+        except socketio.exceptions.ConnectionError as exc:
+            print(
+                f"[bot] Impossible de joindre le backend à {SERVEUR_URL} : vérifier que le "
+                f"backend tourne, l'IP, et le pare-feu du PC backend (port 3000). ({exc}) "
+                "Nouvel essai dans 5 s..."
+            )
+            time.sleep(5)
     sio.wait()

@@ -13,9 +13,11 @@ npm install
 npm run dev
 ```
 
-Par défaut elle pointe sur le backend Hostinger (bowling.m2s-photo.fr). Pour
-pointer sur un backend local, copier `.env.example` en `.env.local` et
-ajuster `VITE_SERVEUR_URL`.
+Par défaut elle pointe sur le backend local `http://<hôte de la page>:3000` :
+`localhost:3000` sur le PC backend, `<IP du PC>:3000` depuis une tablette du
+même Wi-Fi (lancer alors `npm run dev -- --host` et ouvrir
+`http://<IP du PC>:5173`). Pour viser un autre backend, copier `.env.example`
+en `.env.local` et ajuster `VITE_SERVEUR_URL`. Démo complète : cf. README racine.
 
 ## Modules
 

@@ -20,8 +20,8 @@
   <div id="log"></div>
 
 <script>
-  // Backend déployé sur Hostinger (voir README)
-  const SERVEUR_URL = "https://bowling.m2s-photo.fr";
+  // Backend local (voir README) - fallback localhost si ouvert en file://
+  const SERVEUR_URL = `http://${location.hostname || "localhost"}:3000`;
   const socket = io(SERVEUR_URL);
   const logEl = document.getElementById("log");
   const btn = document.getElementById("btnNouvellePartie");

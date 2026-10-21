@@ -1,7 +1,7 @@
 // Config centralisée - même approche que app-borne/src/config.js. En dev
 // local, surchargeable via un fichier .env.local (voir .env.example) ; par
-// défaut pointe sur le backend déployé en continu sur Hostinger.
-export const SERVEUR_URL = import.meta.env.VITE_SERVEUR_URL || "https://bowling.m2s-photo.fr";
+// défaut pointe sur le backend local (port 3000) de la machine qui sert la page.
+export const SERVEUR_URL = import.meta.env.VITE_SERVEUR_URL || `http://${window.location.hostname}:3000`;
 export const API_URL = `${SERVEUR_URL}/api`;
 
 // Modules gérés par le Back-Office (cf. enum ModuleCommande en base et
