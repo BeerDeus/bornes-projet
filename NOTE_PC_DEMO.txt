@@ -1,7 +1,7 @@
 PC DE DEMO - invite de commande (cmd)
 
 1re fois seulement, depuis le dossier du projet (bornes-projet) :
-  (backend\.env doit contenir DATABASE_URL, JWT_SECRET, PORT=3000)
+  (backend\.env est deja dans le repo, rien a creer)
   cd backend && npm install && npx prisma generate && cd ..
   cd app-borne && npm install && cd ..
   cd app-admin && npm install && cd ..
