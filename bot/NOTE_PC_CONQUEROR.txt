@@ -1,0 +1,20 @@
+PC CONQUEROR - invite de commande (cmd)
+
+1re fois seulement, depuis le dossier bornes-projet\bot :
+  python -m venv venv
+  venv\Scripts\activate
+  pip install -r requirements.txt
+
+A chaque fois, depuis le dossier bornes-projet\bot :
+  venv\Scripts\activate
+  python conqueror_bot.py http://IP:3000
+
+  IP = IP du PC de demo (ipconfig sur le PC de demo -> "Adresse IPv4")
+
+ATTENTION : mode REEL par defaut (clique vraiment dans Conqueror).
+Demo sans toucher a Conqueror : taper avant de lancer
+  set SIMULATION_MODE=true
+
+OK si le bot affiche "[bot] connecte a http://IP:3000".
+Sinon : backend pas lance, mauvaise IP, ou pare-feu du PC de demo (port 3000).
+Arreter : Ctrl+C
