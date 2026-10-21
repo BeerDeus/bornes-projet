@@ -1,4 +1,4 @@
-PC DE DEMO - invite de commande (cmd)
+PC DE DEMO - invite de commande (cmd ou PowerShell)
 
 1re fois seulement, depuis le dossier du projet (bornes-projet) :
   (backend\.env est deja dans le repo, rien a creer)
@@ -11,7 +11,11 @@ PC DE DEMO - invite de commande (cmd)
   netsh advfirewall firewall add rule name="Bornes 5173" dir=in action=allow protocol=TCP localport=5173
 
 A chaque demo, depuis le dossier du projet (bornes-projet) :
+  cmd :
   start "Backend" cmd /k "cd backend && npm start" && start "Borne" cmd /k "cd app-borne && npm run dev -- --host" && start "Admin" cmd /k "cd app-admin && npm run dev"
+
+  PowerShell :
+  Start-Process cmd '/k title Backend && cd backend && npm start' -WorkingDirectory $PWD; Start-Process cmd '/k title Borne && cd app-borne && npm run dev -- --host' -WorkingDirectory $PWD; Start-Process cmd '/k title Admin && cd app-admin && npm run dev' -WorkingDirectory $PWD
 
 IP du PC (pour le bot et les tablettes) :
   ipconfig      -> "Adresse IPv4"
